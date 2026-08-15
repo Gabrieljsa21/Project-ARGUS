@@ -25,12 +25,17 @@ from .tema import (
     SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
     GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE,
 )
+from .win32_dwm import aplicar_cantos_redondos
 
 LIMIAR_ARRASTAR_PIXELS = 6
 ATRASO_FECHAR_MS = 250
 RAIO_CANTO = 12
 MAX_LINHAS_VISIVEIS = 5
-ALTURA_LINHA = 30
+ALTURA_LINHA = 36
+TAMANHO_FONTE_NOME = 11
+TAMANHO_FONTE_BADGE = 10
+TAMANHO_FONTE_TICKET = 11
+TAMANHO_FONTE_CABECALHO = 9
 
 
 class _Alavanca(QWidget):
@@ -44,7 +49,7 @@ class _Alavanca(QWidget):
         self._ao_soltar_arraste = ao_soltar_arraste
         self._pos_pressionada = None
         self._arrastou = False
-        self.setFixedSize(24, 24)
+        self.setFixedSize(30, 30)
         self.setCursor(Qt.PointingHandCursor)
 
     def paintEvent(self, evento):
@@ -52,7 +57,7 @@ class _Alavanca(QWidget):
         pintor.setRenderHint(QPainter.Antialiasing)
         pintor.setBrush(QColor(GAIA_GOLD))
         pintor.setPen(Qt.NoPen)
-        pintor.drawEllipse(1, 1, 22, 22)
+        pintor.drawEllipse(1, 1, 28, 28)
 
     def mousePressEvent(self, evento):
         self._pos_pressionada = evento.globalPosition().toPoint()
@@ -110,16 +115,16 @@ class _ChipCategoria(_AreaComHover):
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setSpacing(8)
 
         cor_bolinha = GAIA_GOLD if tem_novidade else GAIA_SILVER
         bolinha = QLabel("●")
-        bolinha.setStyleSheet(f"color: {cor_bolinha}; background: transparent; border: none; font-size: 8px;")
+        bolinha.setStyleSheet(f"color: {cor_bolinha}; background: transparent; border: none; font-size: 9px;")
         layout.addWidget(bolinha)
 
         nome = QLabel(categoria.nome_exibicao)
-        nome.setFont(QFont(FONTE_BASE, 9))
+        nome.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_NOME))
         nome.setStyleSheet(f"color: {TEXT_COLOR}; background: transparent; border: none;")
         layout.addWidget(nome)
 
@@ -127,13 +132,13 @@ class _ChipCategoria(_AreaComHover):
         cor_texto_badge = SURFACE_COLOR if tem_novidade else TEXT_DIM
         badge = QLabel(str(contagem))
         badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedHeight(17)
-        badge.setMinimumWidth(17)
-        fonte_badge = QFont(FONTE_BASE, 8, QFont.Bold)
+        badge.setFixedHeight(21)
+        badge.setMinimumWidth(21)
+        fonte_badge = QFont(FONTE_BASE, TAMANHO_FONTE_BADGE, QFont.Bold)
         badge.setFont(fonte_badge)
         badge.setStyleSheet(
             f"background-color: {cor_badge}; color: {cor_texto_badge}; "
-            "border-radius: 8px; padding: 0px 5px;"
+            "border-radius: 10px; padding: 0px 7px;"
         )
         layout.addWidget(badge)
 
@@ -163,6 +168,13 @@ class ArgusWidget(QWidget):
 
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        # 🔥 Cantos arredondados nativos do Windows em vez de setMask() manual
+        # (2026-08-15, achado pesquisando amnweb/yasb) - winId() força a
+        # criação do handle nativo, só depois disso a chamada DWM funciona.
+        # Sem suporte (Windows <11, não-Windows, qualquer erro), cai pro
+        # mascaramento manual de sempre (ver _atualizar_mascara).
+        self.winId()
+        self._cantos_nativos_ok = aplicar_cantos_redondos(self)
 
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
@@ -170,16 +182,16 @@ class ArgusWidget(QWidget):
 
         self._barra = QWidget()
         self._layout_barra = QHBoxLayout(self._barra)
-        self._layout_barra.setContentsMargins(10, 6, 10, 6)
-        self._layout_barra.setSpacing(4)
+        self._layout_barra.setContentsMargins(12, 8, 12, 8)
+        self._layout_barra.setSpacing(6)
         self._alavanca = _Alavanca(self._alternar_modo, self._persistir_posicao, self._barra)
         self._layout_barra.addWidget(self._alavanca)
         layout_raiz.addWidget(self._barra)
 
         self._painel = _AreaComHover(self._cancelar_fechar, self._agendar_fechar, self)
         self._layout_painel = QVBoxLayout(self._painel)
-        self._layout_painel.setContentsMargins(12, 8, 12, 10)
-        self._layout_painel.setSpacing(6)
+        self._layout_painel.setContentsMargins(14, 10, 14, 12)
+        self._layout_painel.setSpacing(8)
         self._painel.setVisible(False)
         layout_raiz.addWidget(self._painel)
 
@@ -305,7 +317,8 @@ class ArgusWidget(QWidget):
 
     def _aplicar_tamanho_real(self):
         self.resize(self.sizeHint())
-        self._atualizar_mascara()
+        if not self._cantos_nativos_ok:
+            self._atualizar_mascara()
 
     # --- conteúdo do painel --------------------------------------------------
 
@@ -327,10 +340,10 @@ class ArgusWidget(QWidget):
             if widget:
                 widget.deleteLater()
 
-        largura = max(self._barra.sizeHint().width(), 260)
+        largura = max(self._barra.sizeHint().width(), 320)
 
         cabecalho = QLabel(f"{categoria.nome_exibicao} ({categoria.total})")
-        cabecalho.setFont(QFont(FONTE_BASE, 8))
+        cabecalho.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_CABECALHO))
         cabecalho.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
         self._layout_painel.addWidget(cabecalho)
 
@@ -357,7 +370,7 @@ class ArgusWidget(QWidget):
         conteudo.setStyleSheet("background: transparent;")
         layout_lista = QVBoxLayout(conteudo)
         layout_lista.setContentsMargins(0, 0, 0, 0)
-        layout_lista.setSpacing(2)
+        layout_lista.setSpacing(4)
         layout_lista.setAlignment(Qt.AlignTop)
         for ticket in categoria.tickets:
             layout_lista.addWidget(self._linha_ticket(ticket, largura))
@@ -369,17 +382,17 @@ class ArgusWidget(QWidget):
         linha = QWidget()
         linha.setFixedHeight(ALTURA_LINHA - 4)
         layout_linha = QHBoxLayout(linha)
-        layout_linha.setContentsMargins(4, 2, 4, 2)
-        layout_linha.setSpacing(8)
+        layout_linha.setContentsMargins(6, 3, 6, 3)
+        layout_linha.setSpacing(10)
 
         peso = QFont.Bold if ticket.novo else QFont.Normal
-        fonte = QFont(FONTE_BASE, 9, peso)
+        fonte = QFont(FONTE_BASE, TAMANHO_FONTE_TICKET, peso)
         cor_texto = TEXT_COLOR if ticket.novo else TEXT_DIM
         sufixo = " ● NOVO" if ticket.novo else ""
         texto_bruto = f"{ticket.chave} | {ticket.resumo}{sufixo}"
 
         metricas = QFontMetrics(fonte)
-        texto_elidido = metricas.elidedText(texto_bruto, Qt.ElideRight, largura_disponivel - 60)
+        texto_elidido = metricas.elidedText(texto_bruto, Qt.ElideRight, largura_disponivel - 70)
 
         texto = QLabel(texto_elidido)
         texto.setFont(fonte)
@@ -387,7 +400,7 @@ class ArgusWidget(QWidget):
         layout_linha.addWidget(texto, 1)
 
         abrir = QLabel("↗")
-        abrir.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none; font-size: 13px;")
+        abrir.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none; font-size: 15px;")
         abrir.setCursor(Qt.PointingHandCursor)
         abrir.mousePressEvent = lambda evento, t=ticket: self._abrir_ticket(t)
         layout_linha.addWidget(abrir)
@@ -402,19 +415,30 @@ class ArgusWidget(QWidget):
     # --- janela (pintura/máscara/posição) -------------------------------------
 
     def paintEvent(self, evento):
+        """🔥 Com cantos nativos do DWM (`_cantos_nativos_ok`), o Windows já
+        recorta a janela pro formato arredondado - só precisa preencher um
+        retângulo normal, sem `QPainterPath`/`setMask` nenhum (2026-08-15,
+        achado pesquisando amnweb/yasb - ver win32_dwm.py). Sem suporte, cai
+        pro desenho manual de sempre."""
         pintor = QPainter(self)
         pintor.setRenderHint(QPainter.Antialiasing)
-        caminho = QPainterPath()
-        caminho.addRoundedRect(self.rect(), RAIO_CANTO, RAIO_CANTO)
         cor_fundo = QColor(SURFACE_COLOR)
         cor_fundo.setAlpha(235)
+
+        if self._cantos_nativos_ok:
+            pintor.fillRect(self.rect(), cor_fundo)
+            return
+
+        caminho = QPainterPath()
+        caminho.addRoundedRect(self.rect(), RAIO_CANTO, RAIO_CANTO)
         pintor.fillPath(caminho, cor_fundo)
         pintor.setPen(QColor(BORDA_SUTIL))
         pintor.drawPath(caminho)
 
     def resizeEvent(self, evento):
         super().resizeEvent(evento)
-        self._atualizar_mascara()
+        if not self._cantos_nativos_ok:
+            self._atualizar_mascara()
 
     def _atualizar_mascara(self):
         caminho = QPainterPath()
