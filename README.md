@@ -1,9 +1,25 @@
-# Argus
+# Project-ARGUS
 
 Widget desktop que fica no topo mostrando novidade nos seus chamados do Jira
 (Nordware Service Desk) - sem precisar abrir o Jira ou depender de e-mail.
 
 Arquitetura completa e decisões de design em [`ARQUITETURA.md`](ARQUITETURA.md).
+
+## A origem de ARGUS
+
+O nome vem de Argos Panoptes, o gigante de cem olhos da mitologia grega,
+conhecido por sua vigilância constante.
+
+O conceito representa a função do projeto: manter vários "olhos" sobre os
+chamados e destacar quando algo exige atenção.
+
+Na mitologia grega, após a morte de Argos, Hera preservou seus muitos olhos
+nas penas da cauda do pavão, animal associado à deusa.
+
+Por isso, o pavão foi escolhido como símbolo do ARGUS. Os "olhos" de suas
+penas representam a capacidade do sistema de observar simultaneamente
+diferentes chamados e estados, enquanto alerta o usuário quando algo muda ou
+exige atenção.
 
 ## Uso standalone
 
