@@ -165,11 +165,16 @@ class JiraProvider(NotificacaoProvider):
             }
         return None
 
-    def _primeiro_anexo_imagem(self, issue: dict) -> dict | None:
-        for anexo in issue["fields"].get("attachment", []) or []:
-            if (anexo.get("mimeType") or "").startswith("image/"):
-                return anexo
-        return None
+    def _ultimo_anexo_imagem(self, issue: dict) -> dict | None:
+        """O ÚLTIMO anexo de imagem (não o primeiro) - a API do Jira lista
+        anexos em ordem cronológica, e um ticket "Aguardando Cliente" pode
+        acumular vários prints ao longo da conversa; o mais recente é o
+        relevante pra analisar agora."""
+        anexos_imagem = [
+            a for a in issue["fields"].get("attachment", []) or []
+            if (a.get("mimeType") or "").startswith("image/")
+        ]
+        return anexos_imagem[-1] if anexos_imagem else None
 
     def _baixar_anexo(self, url: str) -> bytes | None:
         try:
@@ -181,36 +186,44 @@ class JiraProvider(NotificacaoProvider):
 
     def _obter_texto_para_analise(self, issue: dict, chave: str) -> str:
         """Texto usado pra detectar urgência (ver pontuacao.py) - descrição +
-        último comentário; se os dois vierem vazios e o ticket tiver um print
-        anexado (cliente mandou só a tela do erro, sem escrever nada - o caso
-        do slide "E quando o chamado é só uma imagem?"), tenta descrever a
-        imagem via `self._descrever_imagem` (gancho opcional, ver __init__).
-        Resultado da imagem é CACHEADO (persistencia) - não chama visão de novo
-        a cada polling pro mesmo anexo."""
+        último comentário + descrição do último print anexado (via
+        `self._descrever_imagem`, gancho opcional, ver __init__).
+
+        🔥 A imagem é analisada SEMPRE que existe (2026-08-15, pedido do
+        usuário: "ela tem de mandar a imagem independente se tem descrição ou
+        não") - não só quando texto/comentário vêm vazios. Um chamado pode ter
+        descrição escrita E um print que mostra o erro de verdade (o texto
+        sozinho às vezes não conta a urgência real). Resultado é CACHEADO por
+        anexo (`chave:id_do_anexo`, não só `chave`) - um print NOVO chegando
+        depois (ticket que ganha um segundo anexo) não reaproveita a análise
+        do anexo antigo; não chama visão de novo pro MESMO anexo a cada
+        polling."""
         campos = issue["fields"]
         texto = self._texto_plano_adf(campos.get("description")).strip()
         comentarios = campos.get("comment", {}).get("comments", [])
         if comentarios:
             texto = f"{texto} {self._texto_plano_adf(comentarios[-1].get('body'))}".strip()
-        if texto or self._descrever_imagem is None:
+
+        if self._descrever_imagem is None:
             return texto
 
-        analise_cacheada = self._persistencia.obter_analise_imagem(chave)
-        if analise_cacheada is not None:
-            return analise_cacheada
-
-        anexo = self._primeiro_anexo_imagem(issue)
+        anexo = self._ultimo_anexo_imagem(issue)
         if anexo is None:
-            return ""
-        imagem_bytes = self._baixar_anexo(anexo["content"])
-        if imagem_bytes is None:
-            return ""
-        try:
-            descricao_imagem = self._descrever_imagem(imagem_bytes)
-        except Exception:
-            return ""
-        self._persistencia.salvar_analise_imagem(chave, descricao_imagem)
-        return descricao_imagem
+            return texto
+
+        chave_cache = f"{chave}:{anexo['id']}"
+        descricao_imagem = self._persistencia.obter_analise_imagem(chave_cache)
+        if descricao_imagem is None:
+            imagem_bytes = self._baixar_anexo(anexo["content"])
+            if imagem_bytes is None:
+                return texto
+            try:
+                descricao_imagem = self._descrever_imagem(imagem_bytes)
+            except Exception:
+                return texto
+            self._persistencia.salvar_analise_imagem(chave_cache, descricao_imagem)
+
+        return f"{texto} {descricao_imagem}".strip()
 
     def _estado_atual(self, issue: dict) -> dict:
         campos = issue["fields"]
