@@ -21,12 +21,33 @@ DWMWCP_ROUND = 2
 DWMSBT_MAINWINDOW = 2  # "Mica" de verdade (build 22621+)
 
 
+WCA_ACCENT_POLICY = 19
+ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
+
+
 class _MARGINS(ctypes.Structure):
     _fields_ = [
         ("cxLeftWidth", ctypes.c_int),
         ("cxRightWidth", ctypes.c_int),
         ("cyTopHeight", ctypes.c_int),
         ("cyBottomHeight", ctypes.c_int),
+    ]
+
+
+class _ACCENTPOLICY(ctypes.Structure):
+    _fields_ = [
+        ("AccentState", ctypes.c_uint),
+        ("AccentFlags", ctypes.c_uint),
+        ("GradientColor", ctypes.c_uint),
+        ("AnimationId", ctypes.c_uint),
+    ]
+
+
+class _WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
+    _fields_ = [
+        ("Attribute", ctypes.c_int),
+        ("Data", ctypes.POINTER(ctypes.c_int)),
+        ("SizeOfData", ctypes.c_size_t),
     ]
 
 
@@ -63,6 +84,44 @@ def remover_cor_borda(widget) -> bool:
             hwnd, DWMWA_BORDER_COLOR, ctypes.byref(cor), ctypes.sizeof(cor)
         )
         return resultado == 0
+    except Exception:
+        return False
+
+
+def _cor_para_gradiente(cor_hex: str, alpha: int) -> int:
+    """"#RRGGBB" + alpha (0-255) -> inteiro AABBGGRR que a struct ACCENTPOLICY
+    espera - a mesma conversão que o amnweb/yasb faz em `HEXtoRGBAint`."""
+    cor_hex = cor_hex.lstrip("#")
+    r = int(cor_hex[0:2], 16)
+    g = int(cor_hex[2:4], 16)
+    b = int(cor_hex[4:6], 16)
+    return (alpha << 24) | (b << 16) | (g << 8) | r
+
+
+def aplicar_acrylic(widget, cor_hex: str = "#1a1a1d", alpha: int = 200) -> bool:
+    """Acrylic (API não documentada `SetWindowCompositionAttribute`, Win10+) -
+    diferente do Mica, aceita uma cor de "tingimento" própria (`GradientColor`)
+    em vez de só amostrar o desktop cru - dá pra manter escuro/dourado da
+    GAIA em vez do material claro que o Mica mostrou. `alpha` controla o
+    quanto o tingimento domina sobre o blur (mais alto = mais sólido/escuro,
+    mais baixo = mais transparente/blur aparece mais)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        hwnd = int(widget.winId())
+        accent = _ACCENTPOLICY()
+        accent.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND
+        accent.AccentFlags = 0
+        accent.GradientColor = _cor_para_gradiente(cor_hex, alpha)
+        accent.AnimationId = 0
+
+        data = _WINDOWCOMPOSITIONATTRIBDATA()
+        data.Attribute = WCA_ACCENT_POLICY
+        data.SizeOfData = ctypes.sizeof(accent)
+        data.Data = ctypes.cast(ctypes.pointer(accent), ctypes.POINTER(ctypes.c_int))
+
+        resultado = ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
+        return resultado != 0  # 🔥 API de user32/BOOL - 0 é FALHA aqui, oposto do HRESULT do dwmapi acima
     except Exception:
         return False
 

@@ -44,6 +44,7 @@ def main():
     app = QApplication(sys.argv)
     widget = ArgusWidget(ProviderFalso(), PersistenciaArquivo(caminho_config))
     widget.show()
+    app.processEvents()  # esvazia o singleShot(0) agendado por atualizar() no __init__ antes de continuar
     print("OK: categorias:", [(c.chave, c.novidades, c.total) for c in widget._categorias])
     print("OK: chips (novidades):", [(c.categoria.chave) for c in widget._chips])
 
