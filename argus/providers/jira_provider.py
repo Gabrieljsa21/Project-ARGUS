@@ -264,19 +264,26 @@ class JiraProvider(NotificacaoProvider):
                 return True, "comentario"
         return False, None
 
-    def listar_categorias(self) -> list:
-        categorias = []
+    def buscar_dados_brutos(self) -> list:
+        """Parte cara desta classe (JQL x4 + 1 SLA por ticket + Visão/texto de
+        urgência quando aplicável) - SEM comparar contra nenhuma persistência,
+        pra permitir classificar o MESMO resultado contra mais de uma
+        persistência (ex.: fala da GAIA por voz + estado do widget visual, ver
+        `_monitorar_jira_voz_loop` em run.py) sem repetir a ida à rede - 1
+        chamada aqui, depois `classificar()` quantas vezes precisar (puro,
+        sem rede). Antes (2026-08-15) esse custo de rede dobrava a cada ciclo
+        porque duas checagens independentes chamavam `listar_categorias()`
+        cada uma com sua própria persistência."""
+        dados = []
         for chave_cat, nome_cat, id_status in CATEGORIAS_STATUS:
             jql = f'assignee = currentUser() AND status = {id_status} ORDER BY updated DESC'
             issues = self._buscar_issues(jql)
-            tickets = []
+            tickets_brutos = []
             for issue in issues:
                 chave_ticket = issue["key"]
                 campos = issue["fields"]
                 issue_novidade = self._resolver_issue_para_novidade(issue)
                 atual = self._estado_atual(issue_novidade)
-                visto = self._persistencia.obter_estado_ticket(chave_ticket)
-                novo, tipo_evento = self._classificar_evento(visto, atual)
                 prioridade = (campos.get("priority") or {}).get("name", "")
 
                 texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
@@ -284,17 +291,43 @@ class JiraProvider(NotificacaoProvider):
                 sla_info = self._obter_sla_info(chave_ticket)
                 pontuacao_foco = calcular_pontuacao_foco(prioridade, urgencia_no_texto, sla_info)
 
+                tickets_brutos.append({
+                    "chave": chave_ticket,
+                    "resumo": campos["summary"],
+                    "status": campos["status"]["name"],
+                    "prioridade": prioridade,
+                    "atualizado_em": campos["updated"],
+                    "pontuacao_foco": pontuacao_foco,
+                    "urgencia_no_texto": urgencia_no_texto,
+                    "atual": atual,
+                })
+            dados.append((chave_cat, nome_cat, tickets_brutos))
+        return dados
+
+    def classificar(self, dados_brutos: list, persistencia: Persistencia | None = None) -> list:
+        """Parte barata (só compara `dados_brutos` - já buscado - contra uma
+        persistência, sem rede nenhuma) - `persistencia=None` usa a do próprio
+        provider (mesmo comportamento de sempre); passar uma persistência
+        diferente permite reaproveitar a mesma busca pra outro "visto" (ex.:
+        estado do widget visual) sem chamar a API de novo."""
+        persistencia = persistencia or self._persistencia
+        categorias = []
+        for chave_cat, nome_cat, tickets_brutos in dados_brutos:
+            tickets = []
+            for tb in tickets_brutos:
+                visto = persistencia.obter_estado_ticket(tb["chave"])
+                novo, tipo_evento = self._classificar_evento(visto, tb["atual"])
                 tickets.append(Ticket(
-                    chave=chave_ticket,
-                    resumo=campos["summary"],
-                    status=campos["status"]["name"],
-                    prioridade=prioridade,
-                    url=f"{self._base_url}/browse/{chave_ticket}",
-                    atualizado_em=campos["updated"],
+                    chave=tb["chave"],
+                    resumo=tb["resumo"],
+                    status=tb["status"],
+                    prioridade=tb["prioridade"],
+                    url=f"{self._base_url}/browse/{tb['chave']}",
+                    atualizado_em=tb["atualizado_em"],
                     novo=novo,
                     tipo_evento=tipo_evento,
-                    pontuacao_foco=pontuacao_foco,
-                    urgencia_no_texto=urgencia_no_texto,
+                    pontuacao_foco=tb["pontuacao_foco"],
+                    urgencia_no_texto=tb["urgencia_no_texto"],
                 ))
             # 🔥 Ordena por pontuação de foco (2026-08-15, pedido do usuário: "pra
             # eu saber qual focar") - maior pontuação primeiro, dentro de cada
@@ -303,6 +336,9 @@ class JiraProvider(NotificacaoProvider):
             tickets.sort(key=lambda t: t.pontuacao_foco, reverse=True)
             categorias.append(Categoria(chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets))
         return categorias
+
+    def listar_categorias(self) -> list:
+        return self.classificar(self.buscar_dados_brutos())
 
     def marcar_visto(self, chave_ticket: str) -> None:
         issue = self._obter_issue_completo(chave_ticket)
