@@ -13,7 +13,16 @@ Vínculo de 2 saltos (categoria "Aguardando desenvolvimento"): quando o ticket
 tem um link tipo "Problem/Incident" pro board de dev, a novidade é checada no
 ticket VINCULADO, não no ticket de atendimento em si - os devs só comentam lá.
 Isso vale pra qualquer ticket com esse vínculo, não só os "Aguardando
-desenvolvimento" - a categoria em si não importa pra essa decisão, só o vínculo."""
+desenvolvimento" - a categoria em si não importa pra essa decisão, só o vínculo.
+
+🔥 JQL usa o ID do status, não o nome (2026-08-14, achado testando contra a
+instância real) - `status = "Aguardando atendimento"` por NOME devolvia lista
+vazia mesmo pra um ticket comprovadamente nesse status, porque a mesma string
+de nome existe (ou quase - "Em revisão" minúsculo vs "Em Revisão" com R
+maiúsculo) em workflows de OUTROS projetos com IDs diferentes, e o Jira não
+resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
+`/rest/api/3/project/NSD/statuses` - só valem PRA ESTE projeto (NSD); mudariam
+se um dia o fluxo for replicado em outro projeto Jira."""
 
 import requests
 
@@ -22,10 +31,10 @@ from ..persistencia import Persistencia
 from .base import NotificacaoProvider
 
 CATEGORIAS_STATUS = [
-    ("em_revisao", "Em Revisão", "Em Revisão"),
-    ("atendimento", "Aguardando Atendimento", "Aguardando atendimento"),
-    ("cliente", "Aguardando Cliente", "Aguardando cliente"),
-    ("dev", "Aguardando Desenvolvimento", "Aguardando desenvolvimento"),
+    ("em_revisao", "Em Revisão", 10101),
+    ("atendimento", "Aguardando Atendimento", 10103),
+    ("cliente", "Aguardando Cliente", 10104),
+    ("dev", "Aguardando Desenvolvimento", 10300),
 ]
 
 TIPO_VINCULO_DEV = "Problem/Incident"
@@ -49,7 +58,10 @@ class JiraProvider(NotificacaoProvider):
         return self._obter("/rest/api/3/myself")["accountId"]
 
     def _buscar_issues(self, jql: str) -> list:
-        dados = self._obter("/rest/api/3/search", params={
+        """`/rest/api/3/search` (clássico) foi descontinuado pela Atlassian -
+        devolve 410 Gone. `/rest/api/3/search/jql` é o substituto oficial,
+        paginado por `nextPageToken` em vez de `startAt`/`total`."""
+        dados = self._obter("/rest/api/3/search/jql", params={
             "jql": jql,
             "fields": CAMPOS_ISSUE,
             "maxResults": 100,
@@ -107,8 +119,8 @@ class JiraProvider(NotificacaoProvider):
 
     def listar_categorias(self) -> list:
         categorias = []
-        for chave_cat, nome_cat, nome_status in CATEGORIAS_STATUS:
-            jql = f'assignee = currentUser() AND status = "{nome_status}" ORDER BY updated DESC'
+        for chave_cat, nome_cat, id_status in CATEGORIAS_STATUS:
+            jql = f'assignee = currentUser() AND status = {id_status} ORDER BY updated DESC'
             issues = self._buscar_issues(jql)
             tickets = []
             for issue in issues:
