@@ -15,10 +15,11 @@ A personagem/animação continua opcional e decorativa - `_Alavanca` é só o
 lugar-reservado dela (clique alterna novidades/total, arrastar move a
 janela)."""
 
+import os
 import webbrowser
 
 from PySide6.QtCore import Qt, QTimer, QPointF, QEvent, QObject
-from PySide6.QtGui import QPainter, QPainterPath, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient
+from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QStyleOption, QStyle, QApplication
 
 from .tema import (
@@ -66,6 +67,10 @@ EXPANSAO_ANEL = 1.6
 DURACAO_ANEL_MS = 1400
 INTERVALO_TIMER_ANEL_MS = 30
 
+CAMINHO_ICONE_ALAVANCA = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "assets", "icone_argus.png"
+)
+
 # 🔥 Glow no chip aberto (2026-08-15) - variante "5c" escolhida: junto com o
 # destaque já existente (fundo HIGHLIGHT_COLOR + borda dourada), um brilho
 # suave por trás reforça visualmente qual categoria está aberta.
@@ -77,6 +82,8 @@ class _Alavanca(QWidget):
     comum) porque precisa diferenciar clique de arrastar no mesmo gesto de
     mouse. Clique alterna novidades/total; arrastar move a janela inteira."""
 
+    _pixmap_icone = None
+
     def __init__(self, ao_clicar, ao_soltar_arraste, parent=None):
         super().__init__(parent)
         self._ao_clicar = ao_clicar
@@ -85,13 +92,19 @@ class _Alavanca(QWidget):
         self._arrastou = False
         self.setFixedSize(30, 30)
         self.setCursor(Qt.PointingHandCursor)
+        if _Alavanca._pixmap_icone is None:
+            _Alavanca._pixmap_icone = QPixmap(CAMINHO_ICONE_ALAVANCA)
 
     def paintEvent(self, evento):
         pintor = QPainter(self)
         pintor.setRenderHint(QPainter.Antialiasing)
-        pintor.setBrush(QColor(GAIA_GOLD))
-        pintor.setPen(Qt.NoPen)
-        pintor.drawEllipse(1, 1, 28, 28)
+        pintor.setRenderHint(QPainter.SmoothPixmapTransform)
+        icone = self._pixmap_icone.scaled(
+            30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        x = (self.width() - icone.width()) // 2
+        y = (self.height() - icone.height()) // 2
+        pintor.drawPixmap(x, y, icone)
 
     def mousePressEvent(self, evento):
         self._pos_pressionada = evento.globalPosition().toPoint()

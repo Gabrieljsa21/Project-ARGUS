@@ -12,28 +12,20 @@ import sys
 
 from dotenv import load_dotenv
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
-from .core.tema import GAIA_GOLD, SURFACE_COLOR, aplicar_estilo_global
+from .core.tema import aplicar_estilo_global
 from .core.widget import ArgusWidget
 from .persistencia import PersistenciaArquivo
 from .providers.jira_provider import JiraProvider
 
+CAMINHO_ICONE = os.path.join(os.path.dirname(__file__), "assets", "icone_argus.ico")
+
 
 def _icone_bandeja() -> QIcon:
-    """Ícone gerado na hora (círculo dourado, mesma cor da _Alavanca em
-    core/widget.py) - evita depender de um arquivo .ico externo que ainda não
-    existe pro Argus."""
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(QColor(0, 0, 0, 0))
-    pintor = QPainter(pixmap)
-    pintor.setRenderHint(QPainter.Antialiasing)
-    pintor.setBrush(QColor(GAIA_GOLD))
-    pintor.setPen(QColor(SURFACE_COLOR))
-    pintor.drawEllipse(2, 2, 28, 28)
-    pintor.end()
-    return QIcon(pixmap)
+    """Ícone oficial do Argus (pavão de cristal, ver argus/assets/)."""
+    return QIcon(CAMINHO_ICONE)
 
 
 def main():
@@ -48,6 +40,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setWindowIcon(_icone_bandeja())
     aplicar_estilo_global(app)
 
     widget = ArgusWidget(provider, persistencia)
