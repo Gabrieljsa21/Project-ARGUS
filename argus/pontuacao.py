@@ -29,7 +29,18 @@ PONTUACAO_BASE_PADRAO = 50
 
 BONUS_URGENCIA_TEXTO = 20
 
-BONUS_SLA_ESTOURADO = 25
+# 🔥 Escalonamento por horas estouradas + piso garantido (2026-08-15, pedido
+# do usuário: "um ticket com prioridade baixa que já está com 20h negativas"
+# ficava ATRÁS de um High recém-aberto e não urgente, porque o bônus de SLA
+# estourado era fixo (+25), não importava há quanto tempo estourou) - agora
+# cresce com `INCREMENTO_SLA_POR_HORA_ESTOURADA` por hora de atraso REAL
+# (`remainingTime.millis` negativo = quanto estourou, ver `_obter_sla_info`
+# em jira_provider.py), e `PISO_PONTUACAO_SLA_ESTOURADO` garante que NENHUM
+# ticket estourado (mesmo há poucos minutos, prioridade Lowest) fica escondido
+# atrás de um ticket de prioridade alta mas sem pressão de SLA nenhuma.
+BONUS_SLA_ESTOURADO_BASE = 25
+INCREMENTO_SLA_POR_HORA_ESTOURADA = 2
+PISO_PONTUACAO_SLA_ESTOURADO = 85
 BONUS_SLA_MENOS_1H = 20
 BONUS_SLA_MENOS_4H = 10
 BONUS_SLA_MENOS_12H = 5
@@ -54,9 +65,13 @@ def detectar_urgencia_no_texto(texto: str) -> bool:
 def _bonus_sla(sla_info: dict | None) -> int:
     if sla_info is None:
         return 0
+    restante_millis = sla_info.get("restante_millis", 0)
     if sla_info.get("breached"):
-        return BONUS_SLA_ESTOURADO
-    restante_horas = sla_info.get("restante_millis", 0) / 3_600_000
+        # `restante_millis` vem NEGATIVO quando estourado (ex.: -20h em millis)
+        # - negar dá quanto tempo passou do prazo, não só que passou.
+        horas_estouradas = max(0, -restante_millis) / 3_600_000
+        return round(BONUS_SLA_ESTOURADO_BASE + horas_estouradas * INCREMENTO_SLA_POR_HORA_ESTOURADA)
+    restante_horas = restante_millis / 3_600_000
     if restante_horas < 1:
         return BONUS_SLA_MENOS_1H
     if restante_horas < 4:
@@ -69,4 +84,10 @@ def _bonus_sla(sla_info: dict | None) -> int:
 def calcular_pontuacao_foco(prioridade: str, urgencia_no_texto: bool, sla_info: dict | None) -> int:
     base = PONTUACAO_BASE_PRIORIDADE.get(prioridade, PONTUACAO_BASE_PADRAO)
     bonus_texto = BONUS_URGENCIA_TEXTO if urgencia_no_texto else 0
-    return min(100, base + bonus_texto + _bonus_sla(sla_info))
+    pontuacao = base + bonus_texto + _bonus_sla(sla_info)
+    # 🔥 Piso (2026-08-15) - garante que SLA estourado nunca fica escondido
+    # atrás de uma prioridade formal alta mas sem pressão de prazo nenhuma,
+    # mesmo antes de acumular muitas horas de atraso.
+    if sla_info is not None and sla_info.get("breached"):
+        pontuacao = max(pontuacao, PISO_PONTUACAO_SLA_ESTOURADO)
+    return min(100, pontuacao)
