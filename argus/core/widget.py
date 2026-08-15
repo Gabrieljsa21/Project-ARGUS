@@ -17,15 +17,15 @@ janela)."""
 
 import webbrowser
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPainter, QPainterPath, QColor, QRegion, QFont, QFontMetrics
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea
+from PySide6.QtCore import Qt, QTimer, QPointF, QEvent, QObject
+from PySide6.QtGui import QPainter, QPainterPath, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QStyleOption, QStyle, QApplication
 
 from .tema import (
     SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
     GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE,
 )
-from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, remover_cor_borda
+from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 
 LIMIAR_ARRASTAR_PIXELS = 6
 ATRASO_FECHAR_MS = 250
@@ -48,6 +48,28 @@ TAMANHO_FONTE_CABECALHO = 9
 ATIVAR_MICA = False
 ALPHA_FUNDO_SEM_MICA = 235
 ALPHA_FUNDO_COM_MICA = 40
+
+# 🔥 Acrylic escuro (2026-08-15) - diferente do Mica, testado visualmente com
+# 3 níveis de tingimento (alpha 120/190/235) e ESCOLHIDO pelo usuário: alpha
+# 120 (mais blur aparece, tingimento mais leve). Ligado por padrão - quando
+# aplica de verdade (Windows 10+), o preenchimento próprio da janela é
+# pulado inteiramente (ver paintEvent) pra deixar o blur nativo aparecer.
+ATIVAR_ACRYLIC = True
+ALPHA_ACRYLIC = 120
+
+# 🔥 Anel pulsante (2026-08-15) - nasce no raio do badge de uma categoria com
+# novidade, expande até EXPANSAO_ANEL (~160%) enquanto desaparece
+# gradualmente, e reinicia - variante "A" escolhida pelo usuário entre as
+# opções testadas (badge crescendo de tamanho foi descartado: "não quero que
+# a badge aumente e diminua").
+EXPANSAO_ANEL = 1.6
+DURACAO_ANEL_MS = 1400
+INTERVALO_TIMER_ANEL_MS = 30
+
+# 🔥 Glow no chip aberto (2026-08-15) - variante "5c" escolhida: junto com o
+# destaque já existente (fundo HIGHLIGHT_COLOR + borda dourada), um brilho
+# suave por trás reforça visualmente qual categoria está aberta.
+ALPHA_GLOW_ABERTA = 60
 
 
 class _Alavanca(QWidget):
@@ -114,20 +136,52 @@ class _AreaComHover(QWidget):
         super().leaveEvent(evento)
 
 
+class _RepassaRoda(QObject):
+    """Filtro de evento instalado em TODOS os widgets descendentes da lista
+    de tickets (varredura recursiva via `findChildren`, ver _preencher_painel)
+    - sem isso, rolar o mouse em cima de qualquer texto/linha só funcionava
+    quando o cursor estava bem em cima da barra de rolagem em si (achado real
+    testando: "ainda não consigo usar o scroll em qualquer lugar dentro da
+    janela"). Repassa manualmente pro viewport da área rolável - instalar em
+    CADA descendente (não só no container) garante que nenhum widget
+    intermediário consiga engolir o evento sem repassar."""
+
+    def __init__(self, area_scroll, parent=None):
+        super().__init__(parent)
+        self._area_scroll = area_scroll
+
+    def eventFilter(self, objeto, evento):
+        if evento.type() == QEvent.Type.Wheel:
+            QApplication.sendEvent(self._area_scroll.viewport(), evento)
+            return True
+        return False
+
+
 class _ChipCategoria(_AreaComHover):
     """Cápsula de UMA categoria na barra - bolinha de estado (dourada se tem
     novidade, prateada se não) + nome + badge com o contador. Hover chama
-    `ao_entrar_categoria(categoria)`; clique fixa/desfixa o painel."""
+    `ao_entrar_categoria(categoria)`; clique fixa/desfixa o painel.
+
+    🔥 Anel pulsante + glow (2026-08-15, ver constantes no topo do arquivo) -
+    `paintEvent` é sobrescrito aqui, então precisa desenhar o fundo/borda do
+    QSS (`WA_StyledBackground`) manualmente via `QStyle.drawPrimitive` antes
+    de mais nada - sem isso, sobrescrever `paintEvent` faz o destaque
+    dourado de "aberta" parar de aparecer (pegadinha real do Qt: widget com
+    `WA_StyledBackground` só pinta o QSS sozinho se NINGUÉM sobrescrever
+    `paintEvent`)."""
 
     def __init__(self, categoria, contagem, tem_novidade, ao_entrar_categoria, ao_sair, ao_clicar, parent=None):
         super().__init__(lambda: ao_entrar_categoria(categoria), ao_sair, parent)
         self.categoria = categoria
         self._ao_clicar = ao_clicar
+        self._tem_novidade = tem_novidade
+        self._aberta = False
+        self._fase_anel = 0.0
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setContentsMargins(12, 9, 14, 9)
         layout.setSpacing(8)
 
         cor_bolinha = GAIA_GOLD if tem_novidade else GAIA_SILVER
@@ -142,29 +196,151 @@ class _ChipCategoria(_AreaComHover):
 
         cor_badge = GAIA_GOLD if tem_novidade else HIGHLIGHT_COLOR
         cor_texto_badge = SURFACE_COLOR if tem_novidade else TEXT_DIM
-        badge = QLabel(str(contagem))
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedHeight(21)
-        badge.setMinimumWidth(21)
         fonte_badge = QFont(FONTE_BASE, TAMANHO_FONTE_BADGE, QFont.Bold)
-        badge.setFont(fonte_badge)
-        badge.setStyleSheet(
+        self._badge = QLabel(str(contagem))
+        self._badge.setAlignment(Qt.AlignCenter)
+        self._badge.setFont(fonte_badge)
+        # 🔥 Correção (2026-08-15, achado testando: "o círculo se estica
+        # horizontalmente") - largura só MÍNIMA (não fixa) deixava o Qt
+        # esticar o badge quando sobrava espaço na barra (ex.: janela mais
+        # larga por causa do painel aberto), virando uma "pílula" em vez de
+        # círculo. Largura calculada pelo próprio texto (cabe "10"/"23" sem
+        # cortar) e FIXADA de vez - nunca mais estica.
+        metricas_badge = QFontMetrics(fonte_badge)
+        largura_badge = max(21, metricas_badge.horizontalAdvance(str(contagem)) + 14)
+        self._badge.setFixedSize(largura_badge, 21)
+        self._badge.setStyleSheet(
             f"background-color: {cor_badge}; color: {cor_texto_badge}; "
-            "border-radius: 10px; padding: 0px 7px;"
+            "border-radius: 10px;"
         )
-        layout.addWidget(badge)
+        layout.addWidget(self._badge)
 
         self.definir_aberta(False)
 
+        if tem_novidade:
+            self._timer_anel = QTimer(self)
+            self._timer_anel.timeout.connect(self._avancar_anel)
+            self._timer_anel.start(INTERVALO_TIMER_ANEL_MS)
+
+    def _avancar_anel(self):
+        self._fase_anel += INTERVALO_TIMER_ANEL_MS / DURACAO_ANEL_MS
+        if self._fase_anel >= 1.0:
+            self._fase_anel -= 1.0
+        self.update()
+
     def definir_aberta(self, aberta: bool):
+        self._aberta = aberta
         cor_fundo = HIGHLIGHT_COLOR if aberta else "transparent"
         cor_borda = GAIA_GOLD if aberta else "transparent"
         self.setStyleSheet(
             f"_ChipCategoria {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 14px; }}"
         )
+        self.update()
 
     def mousePressEvent(self, evento):
         self._ao_clicar(self.categoria)
+
+    def paintEvent(self, evento):
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.Antialiasing)
+
+        opcao = QStyleOption()
+        opcao.initFrom(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, opcao, pintor, self)
+
+        if self._aberta:
+            pintor.save()
+            caminho_clip = QPainterPath()
+            caminho_clip.addRoundedRect(self.rect(), 14, 14)
+            pintor.setClipPath(caminho_clip)
+            centro = QPointF(self.width() / 2, self.height() / 2)
+            gradiente = QRadialGradient(centro, max(self.width(), self.height()) * 0.8)
+            cor_glow_inicio = QColor(GAIA_GOLD)
+            cor_glow_inicio.setAlpha(ALPHA_GLOW_ABERTA)
+            cor_glow_fim = QColor(GAIA_GOLD)
+            cor_glow_fim.setAlpha(0)
+            gradiente.setColorAt(0.0, cor_glow_inicio)
+            gradiente.setColorAt(1.0, cor_glow_fim)
+            pintor.fillRect(self.rect(), gradiente)
+            pintor.restore()
+
+        if self._tem_novidade:
+            centro_badge = self._badge.mapTo(self, self._badge.rect().center())
+            raio_base = self._badge.height() / 2
+            raio_desejado = raio_base + (raio_base * (EXPANSAO_ANEL - 1.0)) * self._fase_anel
+
+            # 🔥 Correção (2026-08-15, achado testando: "anel pulsante está
+            # descentralizado") - o Qt SEMPRE corta qualquer desenho que
+            # ultrapasse os limites do próprio widget (não tem como desligar
+            # isso) - com o badge perto da borda do chip, o anel expandido
+            # ficava cortado de um lado, parecendo torto/descentrado mesmo
+            # com o centro matematicamente correto. Em vez de confiar só na
+            # margem do layout (frágil - qualquer mudança de fonte/tamanho
+            # podia voltar a cortar), limita o raio ao espaço de verdade
+            # disponível até a borda mais próxima, medido a cada pintura.
+            largura_pen = 2
+            espaco_disponivel = min(
+                centro_badge.x(), self.width() - centro_badge.x(),
+                centro_badge.y(), self.height() - centro_badge.y(),
+            ) - (largura_pen / 2 + 1)
+            raio = min(raio_desejado, max(raio_base, espaco_disponivel))
+
+            alpha = int(190 * (1.0 - self._fase_anel) ** 1.4)
+            if alpha > 0:
+                cor_anel = QColor(GAIA_GOLD)
+                cor_anel.setAlpha(alpha)
+                pintor.setPen(QPen(cor_anel, largura_pen))
+                pintor.setBrush(Qt.NoBrush)
+                pintor.drawEllipse(QPointF(centro_badge), raio, raio)
+
+
+class _LinhaTicket(QWidget):
+    """Uma linha de ticket na lista - campo INTEIRO clicável (abre o ticket
+    no navegador e marca como visto), com destaque sutil ao passar o mouse.
+    Sem ícone/botão separado no final (2026-08-15, pedido do usuário: "acho
+    desnecessário esse botão... coloca o efeito dela no próprio campo da
+    lista") - hover + cursor de mão já comunicam que a linha inteira é
+    clicável, sem precisar de um alvo pequeno separado."""
+
+    def __init__(self, ticket, texto_elidido, fonte, ao_clicar, parent=None):
+        super().__init__(parent)
+        self._ticket = ticket
+        self._ao_clicar = ao_clicar
+        self._hover = False
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(ALTURA_LINHA - 4)
+
+        layout_linha = QHBoxLayout(self)
+        layout_linha.setContentsMargins(8, 3, 8, 3)
+
+        cor_texto = TEXT_COLOR if ticket.novo else TEXT_DIM
+        texto = QLabel(texto_elidido)
+        texto.setFont(fonte)
+        texto.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
+        layout_linha.addWidget(texto, 1)
+
+        self._atualizar_estilo()
+
+    def _atualizar_estilo(self):
+        cor_fundo = HIGHLIGHT_COLOR if self._hover else "transparent"
+        cor_borda = GAIA_GOLD if self._hover else "transparent"
+        self.setStyleSheet(
+            f"_LinhaTicket {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 8px; }}"
+        )
+
+    def enterEvent(self, evento):
+        self._hover = True
+        self._atualizar_estilo()
+        super().enterEvent(evento)
+
+    def leaveEvent(self, evento):
+        self._hover = False
+        self._atualizar_estilo()
+        super().leaveEvent(evento)
+
+    def mousePressEvent(self, evento):
+        self._ao_clicar(self._ticket)
 
 
 class ArgusWidget(QWidget):
@@ -189,6 +365,11 @@ class ArgusWidget(QWidget):
         self._cantos_nativos_ok = aplicar_cantos_redondos(self)
         remover_cor_borda(self)
         self._mica_ok = ATIVAR_MICA and aplicar_mica(self)
+        self._acrylic_ok = (
+            not self._mica_ok
+            and ATIVAR_ACRYLIC
+            and aplicar_acrylic(self, SURFACE_COLOR, ALPHA_ACRYLIC)
+        )
 
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
@@ -224,16 +405,29 @@ class ArgusWidget(QWidget):
 
     def atualizar(self):
         """Chamado pelo QTimer de polling (ver app.py) e depois de abrir um
-        ticket (pra refletir o que foi marcado como visto)."""
+        ticket (pra refletir o que foi marcado como visto).
+
+        🔥 Correção (2026-08-15, achado testando: "às vezes a largura diminui
+        do nada... foi quando cliquei em um ticket") - `_preencher_painel` mede
+        `self._barra.sizeHint()` pra decidir a largura do painel; chamar isso
+        LOGO depois de `_reconstruir_barra()` (que acabou de trocar os chips)
+        devolvia um valor desatualizado, mesmo problema de fundo do bug de
+        encolhimento já corrigido (Qt só recalcula o layout de verdade 1 volta
+        do event loop depois). Por isso o reenchimento do painel, quando ele
+        já está aberto, é adiado do mesmo jeito."""
         self._categorias = self._provider.listar_categorias()
         self._reconstruir_barra()
-        if self._chave_categoria_aberta:
-            categoria = self._categoria_por_chave(self._chave_categoria_aberta)
-            contagem_atual = (categoria.total if self._modo_total else categoria.novidades) if categoria else 0
-            if categoria and contagem_atual > 0:
-                self._preencher_painel(categoria)
-            else:
-                self._fechar_painel()
+        QTimer.singleShot(0, self._atualizar_painel_se_aberto)
+
+    def _atualizar_painel_se_aberto(self):
+        if not self._chave_categoria_aberta:
+            return
+        categoria = self._categoria_por_chave(self._chave_categoria_aberta)
+        contagem_atual = (categoria.total if self._modo_total else categoria.novidades) if categoria else 0
+        if categoria and contagem_atual > 0:
+            self._preencher_painel(categoria)
+        else:
+            self._fechar_painel()
 
     def _categoria_por_chave(self, chave):
         return next((c for c in self._categorias if c.chave == chave), None)
@@ -390,36 +584,26 @@ class ArgusWidget(QWidget):
             layout_lista.addWidget(self._linha_ticket(ticket, largura))
         area.setWidget(conteudo)
 
+        # 🔥 Guarda a referência (self._filtro_roda) - um QObject sem dono
+        # Python que ainda referencie é destruído/coletado, e o filtro para
+        # de funcionar silenciosamente (ver _RepassaRoda acima). Instala em
+        # TODOS os descendentes (não só no container) - varredura recursiva,
+        # garante cobertura mesmo se um widget novo for adicionado depois.
+        self._filtro_roda = _RepassaRoda(area, self)
+        conteudo.installEventFilter(self._filtro_roda)
+        for filho in conteudo.findChildren(QWidget):
+            filho.installEventFilter(self._filtro_roda)
+
         self._layout_painel.addWidget(area)
 
     def _linha_ticket(self, ticket, largura_disponivel) -> QWidget:
-        linha = QWidget()
-        linha.setFixedHeight(ALTURA_LINHA - 4)
-        layout_linha = QHBoxLayout(linha)
-        layout_linha.setContentsMargins(6, 3, 6, 3)
-        layout_linha.setSpacing(10)
-
         peso = QFont.Bold if ticket.novo else QFont.Normal
         fonte = QFont(FONTE_BASE, TAMANHO_FONTE_TICKET, peso)
-        cor_texto = TEXT_COLOR if ticket.novo else TEXT_DIM
         sufixo = " ● NOVO" if ticket.novo else ""
         texto_bruto = f"{ticket.chave} | {ticket.resumo}{sufixo}"
-
         metricas = QFontMetrics(fonte)
-        texto_elidido = metricas.elidedText(texto_bruto, Qt.ElideRight, largura_disponivel - 70)
-
-        texto = QLabel(texto_elidido)
-        texto.setFont(fonte)
-        texto.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
-        layout_linha.addWidget(texto, 1)
-
-        abrir = QLabel("↗")
-        abrir.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none; font-size: 15px;")
-        abrir.setCursor(Qt.PointingHandCursor)
-        abrir.mousePressEvent = lambda evento, t=ticket: self._abrir_ticket(t)
-        layout_linha.addWidget(abrir)
-
-        return linha
+        texto_elidido = metricas.elidedText(texto_bruto, Qt.ElideRight, largura_disponivel - 30)
+        return _LinhaTicket(ticket, texto_elidido, fonte, self._abrir_ticket)
 
     def _abrir_ticket(self, ticket):
         webbrowser.open(ticket.url)
@@ -433,9 +617,27 @@ class ArgusWidget(QWidget):
         recorta a janela pro formato arredondado - só precisa preencher um
         retângulo normal, sem `QPainterPath`/`setMask` nenhum (2026-08-15,
         achado pesquisando amnweb/yasb - ver win32_dwm.py). Sem suporte, cai
-        pro desenho manual de sempre."""
+        pro desenho manual de sempre.
+
+        🔥 Acrylic (2026-08-15, testado com 3 níveis e escolhido alpha 120) -
+        com Acrylic aplicado de verdade, o preenchimento próprio da janela é
+        pulado por completo (só a borda sutil é desenhada) pra deixar o blur
+        nativo do Windows aparecer - preencher em cima dele esconderia o
+        efeito, mesmo problema que o Mica teve."""
         pintor = QPainter(self)
         pintor.setRenderHint(QPainter.Antialiasing)
+
+        if self._acrylic_ok:
+            if self._cantos_nativos_ok:
+                pintor.setPen(QColor(BORDA_SUTIL))
+                pintor.drawRect(self.rect().adjusted(0, 0, -1, -1))
+            else:
+                caminho = QPainterPath()
+                caminho.addRoundedRect(self.rect(), RAIO_CANTO, RAIO_CANTO)
+                pintor.setPen(QColor(BORDA_SUTIL))
+                pintor.drawPath(caminho)
+            return
+
         cor_fundo = QColor(SURFACE_COLOR)
         cor_fundo.setAlpha(ALPHA_FUNDO_COM_MICA if self._mica_ok else ALPHA_FUNDO_SEM_MICA)
 
