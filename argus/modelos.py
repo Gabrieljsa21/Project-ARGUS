@@ -19,6 +19,13 @@ class Ticket:
     # O core/ (janela) não usa isso pra nada hoje - só existe pra quem
     # consome o provider precisar de mais contexto que um bool.
     tipo_evento: str = None
+    # 🔥 Pontuação de foco 1-100 (2026-08-15, pedido do usuário: "gerar uma fila
+    # de tickets ordenados por prioridade q ele definiu, com valores de 1 a 100
+    # para cada ticket... pra eu saber qual focar") - SÓ pra ordenar/exibir no
+    # Argus, nunca escreve nada de volta no Jira (ver argus/pontuacao.py). 50 é
+    # o valor neutro (prioridade "Medium") usado quando ainda não foi calculado.
+    pontuacao_foco: int = 50
+    urgencia_no_texto: bool = False
 
 
 @dataclass
