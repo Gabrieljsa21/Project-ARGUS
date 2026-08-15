@@ -25,7 +25,7 @@ from .tema import (
     SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
     GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE,
 )
-from .win32_dwm import aplicar_cantos_redondos
+from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, remover_cor_borda
 
 LIMIAR_ARRASTAR_PIXELS = 6
 ATRASO_FECHAR_MS = 250
@@ -36,6 +36,18 @@ TAMANHO_FONTE_NOME = 11
 TAMANHO_FONTE_BADGE = 10
 TAMANHO_FONTE_TICKET = 11
 TAMANHO_FONTE_CABECALHO = 9
+
+# 🔥 Teste visual (2026-08-15, ver win32_dwm.aplicar_mica) - liga/desliga o
+# fundo Mica nativo pra comparar lado a lado com o preenchimento sólido de
+# sempre antes de decidir manter. Com Mica ativo, o preenchimento próprio usa
+# bem menos alpha (ver ALPHA_FUNDO_COM_MICA) pra deixar o material aparecer.
+# DESLIGADO (2026-08-15, pedido do usuário depois de ver rodando: "achei
+# feio... prefiro cores escuras") - o material claro/acinzentado do Mica não
+# combina com a identidade escura da GAIA. Função continua em win32_dwm.py,
+# só não é mais chamada por padrão.
+ATIVAR_MICA = False
+ALPHA_FUNDO_SEM_MICA = 235
+ALPHA_FUNDO_COM_MICA = 40
 
 
 class _Alavanca(QWidget):
@@ -175,6 +187,8 @@ class ArgusWidget(QWidget):
         # mascaramento manual de sempre (ver _atualizar_mascara).
         self.winId()
         self._cantos_nativos_ok = aplicar_cantos_redondos(self)
+        remover_cor_borda(self)
+        self._mica_ok = ATIVAR_MICA and aplicar_mica(self)
 
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
@@ -423,7 +437,7 @@ class ArgusWidget(QWidget):
         pintor = QPainter(self)
         pintor.setRenderHint(QPainter.Antialiasing)
         cor_fundo = QColor(SURFACE_COLOR)
-        cor_fundo.setAlpha(235)
+        cor_fundo.setAlpha(ALPHA_FUNDO_COM_MICA if self._mica_ok else ALPHA_FUNDO_SEM_MICA)
 
         if self._cantos_nativos_ok:
             pintor.fillRect(self.rect(), cor_fundo)
