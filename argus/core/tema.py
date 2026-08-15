@@ -16,6 +16,19 @@ TEXT_COLOR = "#f1efe9"
 TEXT_DIM = "#8f8d8a"
 FONTE_BASE = "Segoe UI"
 
+# 🔥 Cor por prioridade real do Jira (2026-08-15, pedido do usuário, ver
+# core/widget.py::_LinhaTicket) - representa SÓ a prioridade cadastrada no
+# Jira, nunca a pontuação de foco (essa continua só ordenando a lista, sem
+# cor própria) - as duas coisas respondem perguntas diferentes ("o que é
+# formalmente urgente" vs. "o que focar agora").
+CORES_PRIORIDADE = {
+    "Highest": "#FF5C5C",
+    "High": "#FF9F43",
+    "Medium": "#E8C66A",
+    "Low": "#73B7FF",
+    "Lowest": "#9AA3AD",
+}
+
 
 def aplicar_estilo_global(app):
     """Chamado 1x na criação da QApplication (ver app.py) - MESMO tratamento
