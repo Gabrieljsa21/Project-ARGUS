@@ -332,12 +332,14 @@ class _LinhaTicket(QWidget):
 
         # 🔥 Cor por prioridade (2026-08-15, pedido do usuário: "a cor da fonte
         # representa exclusivamente a prioridade cadastrada no Jira") - só no
-        # código+nome da prioridade (rich text HTML no QLabel), o resumo
-        # continua na cor normal de sempre pra não virar uma parede de cor e
-        # perder legibilidade.
+        # código (rich text HTML no QLabel), o resumo continua na cor normal
+        # de sempre pra não virar uma parede de cor e perder legibilidade. Sem
+        # escrever o NOME da prioridade (2026-08-15, "não precisa escrever
+        # prioridade no nome, já tem legenda das cores") - a cor sozinha já
+        # basta, a legenda no topo do painel explica o que cada uma significa.
         prefixo = QLabel(
             f'<span style="color:{cor_texto};">[{ticket.pontuacao_foco}]</span> '
-            f'<span style="color:{cor_prioridade};">{ticket.chave} · {ticket.prioridade}</span>'
+            f'<span style="color:{cor_prioridade};">{ticket.chave}</span>'
         )
         prefixo.setTextFormat(Qt.RichText)
         prefixo.setFont(fonte)
@@ -653,7 +655,7 @@ class ArgusWidget(QWidget):
         # bastante pra caber inteiro) - a largura medida aqui é em cima do
         # texto PLANO (sem HTML), `_LinhaTicket` que monta o rich text de
         # verdade a partir do ticket.
-        prefixo_plano = f"[{ticket.pontuacao_foco}] {ticket.chave} · {ticket.prioridade}  "
+        prefixo_plano = f"[{ticket.pontuacao_foco}] {ticket.chave}  "
         metricas = QFontMetrics(fonte)
         largura_resumo = max(0, largura_disponivel - 30 - metricas.horizontalAdvance(prefixo_plano))
         resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}", Qt.ElideRight, largura_resumo)
