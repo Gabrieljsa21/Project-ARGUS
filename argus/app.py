@@ -1,17 +1,39 @@
 """Entrypoint standalone - `python -m argus.app`. Sobe a PRÓPRIA QApplication;
 rodando dentro da GAIA, ela instancia `ArgusWidget` na QApplication que já
-existe (ver ui/qt_painel.py) em vez de chamar isto."""
+existe (ver ui/qt_painel.py) em vez de chamar isto.
+
+🔥 Ícone na bandeja do sistema (2026-08-14) - a janela do widget é SEM BORDA de
+propósito (ver core/widget.py), então não existe nenhum "X" pra fechar. Sem
+isso, a única forma de encerrar seria o Gerenciador de Tarefas - mesmo padrão
+que a GAIA já usa (ícone na bandeja controla o processo em segundo plano)."""
 
 import os
 import sys
 
 from dotenv import load_dotenv
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
+from .core.tema import GAIA_GOLD, SURFACE_COLOR, aplicar_estilo_global
 from .core.widget import ArgusWidget
 from .persistencia import PersistenciaArquivo
 from .providers.jira_provider import JiraProvider
+
+
+def _icone_bandeja() -> QIcon:
+    """Ícone gerado na hora (círculo dourado, mesma cor da _Alavanca em
+    core/widget.py) - evita depender de um arquivo .ico externo que ainda não
+    existe pro Argus."""
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    pintor = QPainter(pixmap)
+    pintor.setRenderHint(QPainter.Antialiasing)
+    pintor.setBrush(QColor(GAIA_GOLD))
+    pintor.setPen(QColor(SURFACE_COLOR))
+    pintor.drawEllipse(2, 2, 28, 28)
+    pintor.end()
+    return QIcon(pixmap)
 
 
 def main():
@@ -25,12 +47,25 @@ def main():
     provider = JiraProvider(base_url, email, token, persistencia)
 
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    aplicar_estilo_global(app)
+
     widget = ArgusWidget(provider, persistencia)
     widget.show()
 
     timer = QTimer()
     timer.timeout.connect(widget.atualizar)
     timer.start(intervalo_segundos * 1000)
+
+    menu_bandeja = QMenu()
+    menu_bandeja.addAction("Atualizar agora", widget.atualizar)
+    menu_bandeja.addSeparator()
+    menu_bandeja.addAction("Fechar Argus", app.quit)
+
+    bandeja = QSystemTrayIcon(_icone_bandeja())
+    bandeja.setToolTip("Argus")
+    bandeja.setContextMenu(menu_bandeja)
+    bandeja.show()
 
     sys.exit(app.exec())
 

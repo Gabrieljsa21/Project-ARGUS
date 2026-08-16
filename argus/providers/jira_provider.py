@@ -41,6 +41,14 @@ TIPO_VINCULO_DEV = "Problem/Incident"
 AUTORES_AUTOMATICOS_IGNORADOS = {"Automation for Jira"}
 CAMPOS_ISSUE = "summary,status,priority,updated,assignee,comment,issuelinks"
 
+# 🔥 Prioridades que contam como "crítico" pra fala da GAIA (2026-08-15,
+# pedido do usuário: "critico pode considerar high tbm") - nomes reais do
+# esquema de prioridade padrão do Jira ("Highest"/"High"), não confirmados
+# como existentes de fato neste projeto (só "High"/"Medium"/"Low"/"Lowest"
+# foram vistos em tickets reais até agora) - ajustar se "Highest" nunca
+# aparecer na prática.
+PRIORIDADES_CRITICAS = {"Highest", "High"}
+
 
 class JiraProvider(NotificacaoProvider):
     def __init__(self, base_url: str, email: str, api_token: str, persistencia: Persistencia):
@@ -100,22 +108,31 @@ class JiraProvider(NotificacaoProvider):
             "ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
         }
 
-    def _eh_novidade(self, visto: dict | None, atual: dict) -> bool:
+    def _classificar_evento(self, visto: dict | None, atual: dict) -> tuple:
+        """Devolve (novo: bool, tipo: str | None) - o tipo classifica o
+        motivo mais relevante da novidade (usado pela fala da GAIA por voz,
+        que menciona código+status+urgência, nunca o resumo do ticket - ver
+        ARQUITETURA.md). Ordem de checagem = ordem de importância: ticket
+        nunca visto > virou crítico > mudou de status > mudou de prioridade
+        (não-crítica) > reatribuído > comentário de terceiro."""
         if visto is None:
-            return True
+            return True, "novo"
+        prioridade_mudou = visto.get("prioridade") != atual["prioridade"]
+        if prioridade_mudou and atual["prioridade"] in PRIORIDADES_CRITICAS:
+            return True, "critico"
         if visto.get("status") != atual["status"]:
-            return True
-        if visto.get("prioridade") != atual["prioridade"]:
-            return True
+            return True, "status_mudou"
+        if prioridade_mudou:
+            return True, "prioridade_mudou"
         if visto.get("assignee_id") != atual["assignee_id"]:
-            return True
+            return True, "atribuido"
         comentario_novo = atual["ultimo_comentario_id"] and atual["ultimo_comentario_id"] != visto.get("ultimo_comentario_id")
         if comentario_novo:
             autor_id = atual["ultimo_comentario_autor_id"]
             autor_nome = atual["ultimo_comentario_autor_nome"] or ""
             if autor_id != self._minha_account_id and not self._eh_autor_automatico(autor_nome):
-                return True
-        return False
+                return True, "comentario"
+        return False, None
 
     def listar_categorias(self) -> list:
         categorias = []
@@ -129,6 +146,7 @@ class JiraProvider(NotificacaoProvider):
                 issue_novidade = self._resolver_issue_para_novidade(issue)
                 atual = self._estado_atual(issue_novidade)
                 visto = self._persistencia.obter_estado_ticket(chave_ticket)
+                novo, tipo_evento = self._classificar_evento(visto, atual)
                 tickets.append(Ticket(
                     chave=chave_ticket,
                     resumo=campos["summary"],
@@ -136,7 +154,8 @@ class JiraProvider(NotificacaoProvider):
                     prioridade=(campos.get("priority") or {}).get("name", ""),
                     url=f"{self._base_url}/browse/{chave_ticket}",
                     atualizado_em=campos["updated"],
-                    novo=self._eh_novidade(visto, atual),
+                    novo=novo,
+                    tipo_evento=tipo_evento,
                 ))
             categorias.append(Categoria(chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets))
         return categorias
