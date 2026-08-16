@@ -4,6 +4,14 @@ Widget desktop de notificação de chamados do Jira. Nasceu de uma ideia de noti
 
 Este documento consolida as decisões tomadas em uma sessão de design (2026-08-14), antes de qualquer linha de código escrita. Não substitui julgamento durante a implementação — decisões pequenas (intervalo exato de polling, cores, nomes de variável) ficam para a hora de codar.
 
+## Estado atual (2026-08-15)
+
+Todas as fases da seção "Fases sugeridas" (fim deste documento) foram
+implementadas, além de features que não estavam no design original. Onde
+este documento descrevia um PLANO, as seções abaixo foram atualizadas pra
+refletir o que existe de verdade; novas seções cobrem o que foi adicionado
+depois. Ver `README.md` pro resumo rápido de uso.
+
 ## Objetivo
 
 Substituir a notificação de e-mail crua do Jira (assunto + corpo cheio de rodapé da Atlassian) por um widget sempre visível no desktop, que mostra, por status de atendimento, o que precisa da atenção do usuário — sem depender do avatar Live2D/VTube Studio, que é um sistema totalmente separado.
@@ -41,9 +49,11 @@ Consequência pra arquitetura: a categoria "Dev" precisa de **polling em 2 etapa
 
 O usuário confirmou que esse tipo de vínculo é sempre o mesmo (a automação nunca varia) — não precisa de lógica adicional para detectar variações.
 
-### SLA disponível (não usado ainda, mas confirmado disponível)
+### SLA — implementado, alimenta a pontuação de foco e o painel de detalhes
 
-Cada issue carrega um campo de SLA nativo do Jira Service Management (no schema atual da instância, `customfield_10100` = "Time to resolution") com `ongoingCycle.remainingTime`, `breachTime` e `breached` (booleano). Estruturado, não precisa ser inferido de texto — útil se algum dia quisermos mostrar "tempo restante" no card do ticket.
+Cada issue carrega um campo de SLA nativo do Jira Service Management (no schema atual da instância, `customfield_10100` = "Time to resolution") com `ongoingCycle.remainingTime` (`.millis` e `.friendly`, ex.: "5h 4m"), `breachTime` e `breached` (booleano). Buscado via `/rest/servicedeskapi/request/{chave}/sla` (`JiraProvider._obter_sla_info`) — usado pra:
+- **Pontuação de foco** (ver seção própria abaixo) — SLA estourado escala por hora real de atraso.
+- **Painel de detalhes** — mostra o texto pronto (`remainingTime.friendly`) como "Time to resolution".
 
 ## Regra de "novidade"
 
@@ -62,6 +72,79 @@ Um ticket entra no contador de **novidades** de uma categoria quando, desde a ú
 **O que limpa a novidade:** só abrir o ticket individual (drill-down até o card dele). Abrir a lista da categoria (ver todos os tickets daquele status) **não limpa nada sozinho** — o usuário pode ter 15 tickets ali e não ter lido todos.
 
 Implementação: exige um registro persistido por ticket (chave → timestamp/versão da última vez visto), comparado contra o estado atual do ticket a cada polling — mesmo padrão que `gmail_ultimo_id_visto` já usa na GAIA, adaptado pra granularidade de ticket em vez de e-mail. Precisa de rotina de limpeza (tickets resolvidos há N dias saem do registro).
+
+## Pontuação de foco (implementado, 2026-08-15)
+
+Ideia trazida de `triagem-inteligente-prototipo` (TechTalk "Triagem Inteligente
+com IA" do usuário) - decisão explícita: SÓ ordena/exibe a lista, NUNCA
+escreve nada de volta no Jira. `argus/pontuacao.py`, `calcular_pontuacao_foco`
+(1-100) combina:
+
+1. **Prioridade real do Jira** (base) - Lowest=10, Low=30, Medium=50, High=75,
+   Highest=95.
+2. **Urgência no texto livre** (descrição + comentário + descrição de print
+   anexado via Visão) - heurístico por palavra-chave PT-BR, SEM LLM
+   (`detectar_urgencia_no_texto`), ignora negação ("não é urgente"/"sem
+   urgência"/"não precisa ser imediato" são removidas do texto ANTES de
+   procurar as palavras-chave, não descartam a detecção inteira). +20 se
+   confirmada; ganha PISO próprio de 75 - sinal mais confiável que o relógio
+   do SLA sozinho, porque é alguém dizendo isso de propósito.
+3. **SLA real** ("Time to resolution", ver seção acima) - se estourado,
+   escala por HORA REAL de atraso (`BONUS_SLA_ESTOURADO_BASE +
+   INCREMENTO_SLA_POR_HORA_ESTOURADA * horas`), sem piso próprio (correção
+   2026-08-15: um piso fixo fazia até um SLA estourado há poucos minutos
+   numa Lowest pular na frente de um High genuinamente mais crítico - só o
+   ACÚMULO de muitas horas de atraso deve reclassificar prioridade, não o
+   simples fato de ter estourado).
+
+`argus/seguranca.py` mascara senha/token/CPF/CNPJ/cartão do texto antes de
+rodar a detecção de urgência (porte do protótipo C# original).
+
+**Análise de imagem** (`_obter_texto_para_analise`) - quando o ticket tem
+print anexado, SEMPRE analisado (não só quando sem descrição escrita) via
+gancho opcional `descrever_imagem` (Groq, injetado por quem sobe o widget -
+o Argus em si não tem dependência de LLM nenhuma, fica leve/usável pelos
+colegas sem chave de IA). Cache por anexo (`chave:id_do_anexo`, não por
+ticket) - print novo não reaproveita a análise do anexo antigo.
+
+## Cores de prioridade (implementado, 2026-08-15)
+
+`core/tema.py::CORES_PRIORIDADE` - Highest `#FF5C5C`, High `#FF9F43`, Medium
+`#E8C66A`, Low `#73B7FF`, Lowest `#9AA3AD`. Representa a prioridade REAL do
+Jira, nunca a pontuação de foco (conceitos diferentes: "o que é formalmente
+urgente" vs. "o que focar agora"). Aplicada só no código do ticket
+(`[score] CHAVE`, rich text no `QLabel`) - resumo continua na cor normal, sem
+repetir o NOME da prioridade por extenso (a legenda das 5 cores, fixa no topo
+do painel de tickets, já cobre isso).
+
+## Painel de detalhes + análise via LLM opcional (implementado, 2026-08-15)
+
+Clicar num ticket abre `_PainelDetalhesTicket` - janela flutuante PRÓPRIA (não
+embutida na principal) à direita, com Time to resolution, Plataforma, Empresa,
+Relator, Responsável, Tipo de solicitação e Status. Campos extras via IDs
+confirmados direto contra a instância real (MCP Atlassian, projeto NSD):
+`customfield_14901`=Plataforma, `customfield_14601`=Empresa,
+`customfield_10007`=objeto de request do JSM (`.requestType.name`=Tipo de
+solicitação). Botão "Abrir ticket" cobre o clique direto de antes.
+
+Botão "Analisar" (só aparece se AMBOS `JiraProvider.obter_detalhes_completos`
+E um gancho `analisar_ticket` forem injetados - opcional, mesmo espírito do
+gancho de Visão): busca descrição + TODOS os comentários sob demanda
+(`obter_detalhes_completos`, diferente do polling periódico que só olha o
+último comentário pra detectar novidade), deixa adicionar um comentário
+extra, roda numa `QThread` própria (não trava a janela), e mostra o rascunho
+gerado num dialog revisável/copiável. NUNCA posta no Jira sozinho.
+
+## Otimização: busca 1x, classifica N vezes (implementado, 2026-08-15)
+
+`JiraProvider.buscar_dados_brutos()` isola a parte cara (JQL ×4 + SLA por
+ticket + Visão/urgência) SEM comparar contra nenhuma persistência;
+`classificar(dados_brutos, persistencia=None)` compara o resultado já
+buscado contra qualquer `Persistencia`, sem rede nenhuma. `listar_categorias()`
+continua com o mesmo comportamento de sempre por fora (usa as duas peças por
+baixo). Motivo: a GAIA passou a comparar o mesmo estado do Jira contra DUAS
+persistências por ciclo (fala por voz + lembrete de não-visualizado) - sem
+essa separação, isso dobrava as requisições ao Jira por checagem.
 
 ## Modelo de interação da UI
 
@@ -86,13 +169,15 @@ Réplica das regras de janela que o modelo 2D do VTube Studio já tem — **exce
 - **Arrastável** — clicar e mover reposiciona o widget. Precisa diferenciar clique (toggle novidades/total) de arraste (reposicionar) por um limiar pequeno de movimento entre mouse-down e mouse-up.
 - **Posição persiste** entre reinícios (salva em config, não reseta pro padrão a cada abertura).
 
-## Personagem/animação — opcional e decorativa
+## Personagem/ícone — opcional e decorativo (implementado como ÍCONE ESTÁTICO, não animação)
 
-A arte animada da Galateia (Entrada/Idle/Hover) **não é núcleo funcional** — é só um indicador visual acima da barra, usado para chamar atenção de que algo mudou. Isso significa:
-
-- O MVP pode (e deve) nascer **sem nenhuma animação** — só a barra de contadores já é o produto completo e funcional.
-- Adicionar a personagem depois é estritamente aditivo, nunca bloqueante.
-- Se/quando implementada: WebP animado com alpha real, decodificado uma vez em `QPixmap`, sem Chromium/Rive/Lottie (custo de RAM incompatível com rodar ao lado de STT/LLM/TTS na mesma máquina). Ver seção de tecnologia.
+`_Alavanca` (placeholder original) hoje desenha o ícone oficial do Argus (pavão
+de cristal, `assets/icone_argus.png`) - clique alterna novidades/total,
+arrastar move a janela, igual ao design original. **Decisão real** (2026-08-15,
+diferente do plano abaixo): ficou estático - sem animação Entrada/Idle/Hover,
+sem WebP - simplicidade suficiente pro propósito (indicar visualmente que algo
+mudou), sem o custo de implementar/manter frames de animação. Continua
+decorativo/opcional - o MVP funciona 100% só com a barra de contadores.
 
 ## Arquitetura de módulo
 
@@ -108,7 +193,7 @@ argus/
 
 Dois contratos garantem que funciona sozinho E dentro da GAIA:
 
-- **`NotificacaoProvider`** — `listar_categorias()`, `buscar_novidades()`, `marcar_visto(ticket_id)`. O `core/` só fala com essa interface. Uma fonte nova (outro Jira, outro sistema) implementa a mesma interface sem tocar no motor do widget.
+- **`NotificacaoProvider`** — contrato mínimo (`providers/base.py`): `listar_categorias()` (devolve `list[Categoria]` já com `novo` calculado) e `marcar_visto(chave_ticket)`. O `core/` só fala com essa interface. `JiraProvider` expõe métodos EXTRA (`buscar_dados_brutos()`/`classificar()`/`obter_detalhes_completos()`, ver seções abaixo) que não fazem parte do contrato — opcionais, checados via `getattr` por quem consome (ex.: `ArgusWidget`), pra um provider mínimo (ou uma fonte diferente de Jira) continuar funcionando sem eles.
 - **`Persistencia`** — abstrai onde salva "visto"/posição. Rodando sozinho: arquivo próprio (ex. `~/.argus/config.json`). Rodando na GAIA: implementação que grava no `brain.json` dela.
 
 ## Distribuição
@@ -123,10 +208,15 @@ Dois contratos garantem que funciona sozinho E dentro da GAIA:
 - Rodando dentro da GAIA: instanciado na MESMA `QApplication` do Painel — nunca um segundo runtime Qt.
 - Polling simples (loop assíncrono, como os já existentes na GAIA pra e-mail/preço de hardware) — não webhook (exigiria expor endpoint público, infraestrutura desnecessária pra esse caso de uso).
 
-## Fases sugeridas
+## Fases sugeridas (todas concluídas, ver "Estado atual" no topo)
 
-1. **Motor + dado, sem personagem**: barra de contadores, dois modos, lista de categoria, card de ticket, provider Jira com os 4 status + o vínculo de 2 saltos, persistência de "visto".
-2. Validar clique-através/arrastar/transparência num protótipo trivial antes de investir em polimento visual.
-3. Empacotar como projeto instalável (repo próprio, `pyproject.toml`, instruções de config de credencial).
-4. Integrar na GAIA (`run.py` instancia dentro da `QApplication` existente, com adaptador de persistência pro `brain.json`).
-5. Personagem/animação como fase adicional, opcional, sem tocar no que já roda.
+1. ✅ **Motor + dado, sem personagem**: barra de contadores, dois modos, lista de categoria, card de ticket, provider Jira com os 4 status + o vínculo de 2 saltos, persistência de "visto".
+2. ✅ Validar clique-através/arrastar/transparência num protótipo trivial antes de investir em polimento visual.
+3. ✅ Empacotar como projeto instalável (repo próprio, `pyproject.toml`, instruções de config de credencial).
+4. ✅ Integrar na GAIA (`run.py` instancia o `JiraProvider` num loop próprio pra voz; `ui/qt_painel.py` instancia o `ArgusWidget` na MESMA `QApplication` do Painel, com adaptador de persistência pro `brain.json`).
+5. ✅ Personagem virou ÍCONE ESTÁTICO (pavão de cristal), não animação - ver seção "Personagem/ícone" acima; decisão consciente de simplicidade, não uma etapa pulada.
+
+Trabalho depois destas 5 fases (não previsto no design original, ver seções
+próprias acima): pontuação de foco + mascaramento + análise de imagem, cores
+de prioridade, painel de detalhes + análise via LLM, otimização de
+busca/classificação.
