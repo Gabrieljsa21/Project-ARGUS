@@ -34,6 +34,7 @@ def main():
     email = os.environ["JIRA_EMAIL"]
     token = os.environ["JIRA_API_TOKEN"]
     intervalo_segundos = int(os.environ.get("ARGUS_INTERVALO_POLLING_SEGUNDOS", "120"))
+    limite_janelas_destacadas = int(os.environ.get("ARGUS_LIMITE_JANELAS_DESTACADAS", "5"))
 
     persistencia = PersistenciaArquivo()
     provider = JiraProvider(base_url, email, token, persistencia)
@@ -43,7 +44,7 @@ def main():
     app.setWindowIcon(_icone_bandeja())
     aplicar_estilo_global(app)
 
-    widget = ArgusWidget(provider, persistencia)
+    widget = ArgusWidget(provider, persistencia, limite_janelas_destacadas=limite_janelas_destacadas)
     widget.show()
 
     timer = QTimer()
@@ -52,6 +53,7 @@ def main():
 
     menu_bandeja = QMenu()
     menu_bandeja.addAction("Atualizar agora", widget.atualizar)
+    menu_bandeja.addAction("Configurações...", widget.abrir_configuracoes)
     menu_bandeja.addSeparator()
     menu_bandeja.addAction("Fechar Argus", app.quit)
 

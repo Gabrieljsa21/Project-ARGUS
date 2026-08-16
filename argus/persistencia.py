@@ -41,6 +41,20 @@ class Persistencia(ABC):
     def salvar_analise_imagem(self, chave: str, texto: str) -> None:
         raise NotImplementedError
 
+    # 🔥 Menu de Configurações (2026-08-16, ver
+    # argus/core/widget.py::_DialogoConfiguracoes) - também NÃO é
+    # @abstractmethod, mesmo motivo acima. Um dicionário genérico (em vez de
+    # um par obter/salvar por opção) pra não precisar estender a interface de
+    # novo a cada configuração nova que o menu ganhar no futuro.
+    def obter_configuracoes(self) -> dict:
+        """Configurações ajustáveis pelo menu (ex.: `limite_janelas_destacadas`,
+        `chacoalhada_ativa`) - dict vazio se nunca foi salvo (cada consumidor
+        aplica seu próprio padrão via `dict.get`)."""
+        return {}
+
+    def salvar_configuracoes(self, configuracoes: dict) -> None:
+        pass
+
 
 class PersistenciaArquivo(Persistencia):
     """Uso standalone - um arquivo JSON próprio (padrão: ~/.argus/config.json),
@@ -86,4 +100,11 @@ class PersistenciaArquivo(Persistencia):
 
     def salvar_analise_imagem(self, chave: str, texto: str) -> None:
         self._dado.setdefault("analises_imagem", {})[chave] = texto
+        self._salvar()
+
+    def obter_configuracoes(self) -> dict:
+        return self._dado.get("configuracoes", {})
+
+    def salvar_configuracoes(self, configuracoes: dict) -> None:
+        self._dado["configuracoes"] = configuracoes
         self._salvar()

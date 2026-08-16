@@ -30,6 +30,15 @@ CORES_PRIORIDADE = {
 }
 
 
+def cor_com_alpha(cor_hex: str, alpha) -> str:
+    """`cor_hex` (ex.: GAIA_GOLD) -> string `"rgba(r, g, b, alpha)"` pro QSS -
+    mesma função de `ui/qt_widgets.py` da GAIA (copiada aqui, não importada,
+    pelo mesmo motivo do resto da paleta: Argus não depende de código dela)."""
+    cor_hex = cor_hex.lstrip("#")
+    r, g, b = (int(cor_hex[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
 def aplicar_estilo_global(app):
     """Chamado 1x na criação da QApplication (ver app.py) - MESMO tratamento
     que `ui/qt_widgets.py::aplicar_estilo_global` já faz no Painel da GAIA,

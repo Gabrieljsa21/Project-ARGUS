@@ -42,10 +42,14 @@ esquerda (pavão de cristal, não mais um placeholder) e lista de tickets ao
 clicar num número, ordenada por pontuação de foco (1-100, combina
 prioridade + urgência no texto + SLA real) e colorida pela prioridade real do
 Jira. Clicar num ticket abre um painel de detalhes (Time to resolution,
-Plataforma, Empresa, Relator, Responsável, Tipo de solicitação) com botão
-"Abrir ticket" e, opcionalmente, "Analisar" (gera rascunho de resposta ao
+Plataforma, Empresa, Relator, Responsável, Tipo de solicitação) ANEXADO à
+janela principal (clicar em outro ticket fecha o anterior e abre um novo, na
+hora), com ações rápidas (Abrir, 🔗 Copiar link, Copiar código, ⟳ Atualizar,
+📌 Destacar) e, opcionalmente, "Analisar" (gera rascunho de resposta ao
 cliente via LLM - só aparece se quem sobe o widget injetar esse gancho, ex.:
-a GAIA).
+a GAIA). "Destacar" transforma o painel numa janela independente arrastável
+(via uma barra centralizada no cabeçalho); "Reanexar" devolve pro painel
+principal - ver `ARQUITETURA.md` pro detalhe completo.
 
 Integração com a GAIA implementada: widget visual (mesma `QApplication` do
 Painel) + monitoramento de voz (`JiraProvider` sozinho, sem o widget) + gancho

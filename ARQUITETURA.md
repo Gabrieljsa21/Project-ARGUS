@@ -117,15 +117,197 @@ urgente" vs. "o que focar agora"). Aplicada só no código do ticket
 repetir o NOME da prioridade por extenso (a legenda das 5 cores, fixa no topo
 do painel de tickets, já cobre isso).
 
-## Painel de detalhes + análise via LLM opcional (implementado, 2026-08-15)
+## Painel de detalhes: anexado/destacado + análise via LLM opcional (2026-08-15)
 
-Clicar num ticket abre `_PainelDetalhesTicket` - janela flutuante PRÓPRIA (não
-embutida na principal) à direita, com Time to resolution, Plataforma, Empresa,
-Relator, Responsável, Tipo de solicitação e Status. Campos extras via IDs
-confirmados direto contra a instância real (MCP Atlassian, projeto NSD):
-`customfield_14901`=Plataforma, `customfield_14601`=Empresa,
-`customfield_10007`=objeto de request do JSM (`.requestType.name`=Tipo de
-solicitação). Botão "Abrir ticket" cobre o clique direto de antes.
+Clicar num ticket abre `_PainelDetalhesTicket`, com Time to resolution,
+Plataforma, Empresa, Relator, Responsável, Tipo de solicitação e Status.
+Campos extras via IDs confirmados direto contra a instância real (MCP
+Atlassian, projeto NSD): `customfield_14901`=Plataforma,
+`customfield_14601`=Empresa, `customfield_10007`=objeto de request do JSM
+(`.requestType.name`=Tipo de solicitação).
+
+**Reescrito (2026-08-15, pedido registrado em `argus_painel_detalhes_ticket.md`)**
+pra funcionar como extensão visual do Argus, não uma janela desconectada -
+**e simplificado de novo em 2026-08-16** depois que a primeira versão
+(reaproveitar uma instância com crossfade animado entre tickets) se mostrou
+frágil em uso real: o usuário relatou "tickets se sobrepondo" e "não troca
+quando seleciono outro" mesmo após uma tentativa de correção - só validada
+por chamada síncrona em teste automatizado, nunca pela animação de verdade
+rodando no loop de eventos real. Pedido explícito do usuário: "é p ser
+simples, clicou no ticket apareceu ele do lado, clicou em outro ticket, some
+o anterior e abre o novo" - e desconsiderar a ideia de lembrar posição entre
+sessões se essa fosse a causa. O modelo atual (bem mais simples) é:
+
+- **Anexado (padrão):** cada clique num ticket FECHA a instância de
+  `_PainelDetalhesTicket` atualmente anexada (se houver) e ABRE uma
+  instância NOVA do zero pro ticket clicado (`ArgusWidget._ticket_clicado`)
+  - sem crossfade, sem animação de entrada, sem reaproveitamento. Abre à
+  direita da janela principal (ou à esquerda se não couber na área útil do
+  monitor atual, recalculado também quando o Argus muda de monitor, ver
+  `ArgusWidget.moveEvent`/`_calcular_lado_e_x`). O ticket aberto fica
+  destacado na lista (`_LinhaTicket.definir_selecionado`), atualizado na
+  hora (nada de esperar animação/polling).
+- **Destacar/Reanexar:** ação "Destacar" transforma a instância ATUAL numa
+  janela independente, presa àquele ticket até ser reanexada ou fechada; o
+  Argus cria uma instância nova/vazia pro slot anexado. Arrastável via uma
+  pequena BARRA CENTRALIZADA no cabeçalho (`_AlcaArraste`, ver "Ações
+  rápidas" abaixo) - **sem redimensionar** (2026-08-16, pedido do usuário:
+  "não preciso do botão redimensionar, usar ele está duplicando botões" - o
+  grip de redimensionar foi removido; tamanho fica fixo no valor calculado
+  ao destacar). "Reanexar"
+  fecha a janela independente e reabre o ticket no slot anexado (reaproveita
+  o mesmo caminho de `_ticket_clicado`). Sem memória de posição entre
+  sessões (2026-08-16, pedido do usuário - ver acima): cada nova janela
+  destacada parte da posição atual do painel anexado, só com uma cascata
+  (`PASSO_CASCATA_JANELAS_DESTACADAS` × quantas já estão abertas) pra não
+  nascerem empilhadas.
+- **Controle de instâncias:** cada ticket tem no máximo UMA instância aberta
+  (`ArgusWidget._ticket_clicado` checa `_janelas_destacadas` antes do slot
+  anexado) - nunca duas janelas pro mesmo ticket. Clicar num ticket já
+  destacado traz a janela pra frente e dispara um pulso de atenção na borda/
+  glow (`_PainelDetalhesTicket.trazer_para_frente_com_atencao`); uma
+  chacoalhada lateral existe como efeito opcional, ligável no menu de
+  Configurações (ver seção própria abaixo).
+- **Só um ticket "selecionado" por vez (correção 2026-08-16, bug relatado
+  pelo usuário com print de tela):** destacar um ticket, clicar em outro (que
+  abre no anexado) e depois voltar no primeiro (destacado) trazia a janela
+  destacada pra frente mas deixava o painel ANEXADO aberto também - dois
+  tickets apareciam "selecionados" (destacados na lista) ao mesmo tempo.
+  Corrigido: `ArgusWidget._fechar_anexado_se_visivel()` fecha o slot anexado
+  sempre que uma janela DESTACADA é trazida pra frente - só ele, que
+  representa a "seleção implícita"; outras janelas destacadas (tickets
+  destacados de propósito) continuam existindo normalmente.
+- **Limite de janelas destacadas:** configurável (`.env` como padrão de
+  fábrica, ajustável em tempo real no menu de Configurações) - ao atingir o
+  limite, `_DialogoAvisoLimite` (dialog próprio, não `QMessageBox` nativo)
+  avisa em vez de deixar destacar.
+- **Fechamento:** fechar a janela principal fecha o painel ANEXADO junto
+  (`ArgusWidget.closeEvent`); janelas DESTACADAS sobrevivem e continuam
+  independentes (todas as instâncias de `_PainelDetalhesTicket` são
+  top-level SEM parent Qt, mesmo enquanto anexadas - o `ArgusWidget` controla
+  o ciclo de vida explicitamente em vez de depender do Qt destruir filhos
+  junto com o pai).
+- **Tamanho/rolagem:** altura acompanha o conteúdo até o limite da área útil
+  do monitor - passado isso, rolagem interna nos campos (mesmo padrão já
+  usado pra lista de tickets grande, só cria `QScrollArea` quando REALMENTE
+  precisa, ver comentário sobre o bug de encolhimento em `_preencher_painel`).
+  Atualização de dados (polling) empurra os campos atualizados pro painel
+  aberto (anexado ou destacado) sem recriar a janela
+  (`_PainelDetalhesTicket.atualizar_se_mostrando`).
+- **Ações rápidas:** botão "Abrir" (Jira) e "Analisar" na linha debaixo do
+  conteúdo; no CABEÇALHO (2026-08-16, ajuste de posição pedido pelo usuário):
+  🔗 Copiar link colado no código do ticket, à ESQUERDA; à direita, junto do
+  ✕ Fechar, o ícone de alfinete 📌 (Destacar/Reanexar) ao lado de ⟳
+  Atualizar. **Barra de arraste ACIMA da linha de botões, SEMPRE presente**
+  (2026-08-16, ajustado em 2 pedidos do usuário: "quero que ela fique acima
+  dos botões" - antes ficava centralizada NA MESMA linha, entre os dois
+  grupos de ícones; depois "pode deixar a barra sempre presente, só que
+  clicar nela sem desfixar move tudo" - deixou de existir só em modo
+  destacado, agora aparece e arrasta a janela em QUALQUER estado, sem
+  precisar destacar primeiro, ver `_AlcaArraste`). **Arraste VINCULADO em
+  modo anexado** (2026-08-16, pedido do usuário: "a barra de arraste, qnd
+  estiver vinculada a barra dos status, tem q mover TUDO, a barra dos
+  status tbm") - enquanto anexado, arrastar a barra move a janela
+  PRINCIPAL (`ArgusWidget._mover_vinculado_ao_painel`), não o painel; o
+  painel já segue a principal sozinho (`moveEvent`), então os dois andam
+  juntos como um bloco só. Só em modo destacado a barra move a própria
+  janela (independente por definição). Copiar código do ticket ao clicar no
+  código. Destacar/Reanexar virou um único ícone de alfinete (📌 normal =
+  Destacar, 📌 riscado = Reanexar - `_BotaoIcone.definir_riscado`, uma linha
+  diagonal "\" desenhada na mão por cima do emoji, em vez de um segundo
+  emoji - nenhum emoji de "despinar" rende de forma confiável em toda
+  fonte/SO; a diagonal foi invertida (2026-08-16, pedido do usuário: "inverte
+  o bloqueio no alfinete, ta se sobrepondo e mal da p ver") de "/" pra "\",
+  cruzando menos o corpo do glifo).
+- **Botões/campos no PADRÃO VISUAL DA GAIA (2026-08-16, pedido do usuário:
+  "os botões eu quero eles no padrão da GAIA. A GAIA vai ser o padrão de
+  todos os projetos" - diretriz vale pra qualquer projeto novo/futuro, não
+  só o Argus):** todo o visual de botão/campo do Argus foi trocado pelo
+  MOLDE visual da GAIA (`assistant/ui/qt_widgets.py`/`ui/qt_painel.py`) - copiado
+  (não importado, Argus continua standalone/leve, ver docstring do módulo):
+  - `_BotaoIcone` deixou de ser um `QLabel` com clique atribuído e virou um
+    `QPushButton` NATIVO (mesmo molde de `criar_botao_pequeno`) - fundo/borda
+    SEMPRE visíveis (não só no hover), e o Qt já garante clique correto em
+    QUALQUER ponto do botão de graça (resolve de vez o relatado "parece que
+    tem que clicar na posição exata do texto/ícone" - não dependia mais do
+    pixel do glifo desde a versão anterior, mas com `QPushButton` nem
+    precisa mais calcular hit-area na mão).
+  - `_botao_estilizado` ganhou variante `preenchido=True` (fundo dourado
+    sólido pra ação PRINCIPAL - Salvar/Analisar/Copiar/Entendi) igual
+    `criar_botao`; os secundários (Cancelar/Fechar/Abrir) continuam no
+    estilo "outline".
+  - `SpinboxCapsula`/`_CampoValorSpinbox` (campo numérico "Cápsula", botões
+    +/- redondos) substituem o `QSpinBox` nativo (setinhas pequenas demais).
+  - `Switch` (toggle animado, trilho + bolinha) substitui o `QCheckBox`
+    nativo pra configurações liga/desliga (pedido do usuário: "eu prefiro
+    toggle do q checkbox").
+  - Fundo dos dialogs virou `BG_COLOR` (era `SURFACE_COLOR`), igual
+    `ModalArgus` e os outros modais da GAIA.
+  - `_DialogoConfiguracoes` virou cards (`QFrame` + título de seção +
+    descrição, ver `_titulo_secao`/`_descricao`) em vez de um `QFormLayout`
+    cru - mesmo molde do modal `ModalArgus`
+    (`assistant/ui/qt_modais/argus.py`, que já existe do lado da GAIA pras
+    configurações de voz/notificação do Argus - este dialog aqui é as
+    configurações da UI do widget em si, escopo diferente).
+  - O código do ticket (clique pra copiar) usa `_RotuloClicavel` (override
+    de CLASSE do `mousePressEvent`, nunca `label.mousePressEvent =
+    lambda...` por instância) + padding reservado, já que não tem
+    equivalente direto no catálogo da GAIA (texto rico colorido por
+    prioridade, não um emoji fixo).
+- **Causa raiz de "linhas/chips sobrepostos" achada investigando os bugs
+  relatados (correção 2026-08-16):** em TODO lugar que reconstrói uma lista
+  (barra de categorias, lista de tickets, campos do painel de detalhes), o
+  padrão de sempre era `layout.takeAt(0)` + `widget.deleteLater()` - só que
+  `deleteLater()` sozinho destrói o widget numa volta FUTURA do loop de
+  eventos; até lá ele continua VISÍVEL na última posição (`takeAt`/
+  `removeWidget` só param de gerenciar a geometria, não escondem nada),
+  sobreposto ao conteúdo novo que acabou de ocupar aquele mesmo espaço.
+  Corrigido chamando `widget.hide()` ANTES do `deleteLater()` nos três
+  pontos (`_reconstruir_barra`, `_preencher_painel`,
+  `_PainelDetalhesTicket.preparar_conteudo`) - esconde na hora, de forma
+  síncrona; a memória continua sendo limpa depois.
+- **Segunda causa raiz da MESMA família - "quando clico no desfixar ele zoa
+  os botões" (correção 2026-08-16, print de tela real anexado pelo
+  usuário):** a correção acima só escondia widgets adicionados DIRETO no
+  layout - só que `preparar_conteudo` também tem SUB-layouts aninhados
+  (`linha_arraste`/`linha_topo`/`linha_botoes`, via `addLayout`), e
+  `item.widget()` devolve `None` pra um item que é um LAYOUT em vez de um
+  widget - a limpeza nunca enxergava/escondia os widgets DENTRO desses
+  sub-layouts (título, ícones, botões de ação), que ficavam órfãos e
+  VISÍVEIS na posição antiga toda vez que `preparar_conteudo` rodava de novo
+  na MESMA instância (abrir no anexado + destacar, por exemplo) - dava
+  exatamente a impressão de "título/botões duplicados". Corrigido com
+  `_limpar_layout(layout)`, uma limpeza RECURSIVA que desce em qualquer
+  sub-layout encontrado (não só o nível 1).
+
+Ver `testes/testar_painel_detalhes_anexado_destacado.py` pra validação do
+fluxo completo (anexar, trocar de ticket, destacar, reanexar, limite,
+cascata, destaque da lista, fechamento).
+
+## Menu de Configurações (2026-08-16)
+
+As duas opções que antes só davam pra mudar editando `.env`/constante no
+código (limite de janelas destacadas, chacoalhada de atenção - ver seção
+acima) ganharam um menu de verdade: `_DialogoConfiguracoes`
+(`argus/core/widget.py`), aberto via `ArgusWidget.abrir_configuracoes()` -
+no uso standalone, ligado ao item "Configurações..." da bandeja do sistema
+(`app.py`); rodando embutido, quem instanciar o `ArgusWidget` pode ligar isso
+na própria UI do mesmo jeito (método público).
+
+- Persistido via `Persistencia.obter/salvar_configuracoes(dict)` - método NÃO
+  abstrato (pra não quebrar implementações de `Persistencia` já existentes
+  fora deste repo, ex. o adaptador da GAIA) e GENÉRICO (um dict, não um par
+  por opção) pra não precisar estender a interface de novo a cada
+  configuração nova que o menu ganhar.
+- Config salva tem prioridade sobre o argumento do construtor (que no uso
+  standalone vem do `.env`) - se o usuário já mudou algo pelo menu, isso
+  prevalece entre reinícios.
+- Aplica em TEMPO REAL, sem reiniciar o Argus: `_PainelDetalhesTicket` recebe
+  um CALLABLE (`obter_chacoalhada_ativa`, não um bool capturado na criação) -
+  painéis já abertos (anexado ou destacados) refletem a mudança na hora,
+  porque todos compartilham a mesma leitura de `ArgusWidget._chacoalhada_ativa`.
+
+Ver `testes/testar_configuracoes.py`.
 
 Botão "Analisar" (só aparece se AMBOS `JiraProvider.obter_detalhes_completos`
 E um gancho `analisar_ticket` forem injetados - opcional, mesmo espírito do

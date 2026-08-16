@@ -9,10 +9,24 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 ## [Unreleased]
 
 ### Novidades
-- Painel de detalhes reescrito como extensão visual do Argus, não mais uma janela sempre recriada do zero: fica **anexado** (segue a janela principal, reaproveitado com crossfade entre tickets, animação de entrada, indicador de continuidade visual, destaque na lista) e pode ser **destacado** em janela independente (arrastável/redimensionável, posição/tamanho memorizados) via ação "Destacar"/"Reanexar".
+- Painel de detalhes reescrito como extensão visual do Argus: fica **anexado** (segue a janela principal; clicar em outro ticket fecha o anterior e abre um novo, na hora, sem animação) e pode ser **destacado** em janela independente arrastável via uma pequena barra centralizada no cabeçalho.
 - Controle de instância: cada ticket abre no máximo 1 painel (nunca duas janelas pro mesmo ticket) - clicar num ticket já destacado traz a janela pra frente com um pulso de atenção na borda.
-- Posicionamento consciente de múltiplos monitores (área útil, DPI, recalcula o lado ao trocar de monitor) e limite configurável de janelas destacadas (`ARGUS_LIMITE_JANELAS_DESTACADAS`).
-- Novas ações rápidas no painel: Copiar link e Copiar código do ticket (clique no código).
+- Posicionamento consciente de múltiplos monitores (área útil, recalcula o lado ao trocar de monitor) e limite configurável de janelas destacadas.
+- Menu "Configurações..." na bandeja do sistema (`_DialogoConfiguracoes`): limite de janelas destacadas e chacoalhada de atenção agora são ajustáveis em tempo real e persistidos, sem precisar editar `.env`/código.
+- Ações rápidas do painel de detalhes viraram ícones compactos em vez de botões de texto: 🔗 Copiar link colado no código do ticket (à esquerda do cabeçalho), 📌 alfinete pro par Destacar/Reanexar (riscado quando já destacado) ao lado de ⟳ Atualizar e do ✕ Fechar (à direita), "Abrir no Jira" resumido pra "Abrir". Copiar código do ticket ao clicar no código.
+- Botões e campos do Argus passaram a seguir o PADRÃO VISUAL DA GAIA (agora o padrão de todos os projetos): ícones do cabeçalho viraram `QPushButton` nativo (era `QLabel`), variante de botão "preenchido" (dourado) pras ações principais, campo numérico "Cápsula" (era `QSpinBox` nativo) e toggle animado `Switch` (era `QCheckBox`) no menu de Configurações, que também ganhou layout em cards.
+
+### Correções
+- Destacar vários tickets em seguida sem arrastar nenhum antes fazia as janelas independentes nascerem exatamente sobrepostas (empilhadas, indistinguíveis) - corrigido com um deslocamento em cascata a cada nova janela destacada.
+- Selecionar um ticket e depois outro não trocava o painel de forma confiável e podia deixar tickets sobrepostos na lista - a primeira versão (uma instância reaproveitada com crossfade animado) se mostrou frágil em uso real. Simplificado: cada ticket clicado fecha o painel anterior e abre um novo do zero, sem animação nem estado intermediário.
+- Causa raiz mais ampla encontrada investigando o item acima: ao reconstruir a barra de categorias/lista de tickets/painel de detalhes, os widgets antigos removidos do layout só eram marcados com `deleteLater()` - continuavam VISÍVEIS na posição antiga (sobrepostos ao conteúdo novo) até uma volta futura do loop de eventos. Corrigido escondendo (`hide()`) o widget antigo na hora, em todos os pontos que recriam listas.
+- Botões pareciam exigir clicar exatamente em cima do texto/ícone - resolvido de vez trocando o `QLabel` customizado por um `QPushButton` nativo (padrão da GAIA), que já garante clique em qualquer ponto do botão.
+- Arrastar a janela destacada não funcionava de forma confiável (área de arraste invisível ocupando todo o cabeçalho) - trocado por uma pequena barra de arraste sempre visível (em qualquer estado, anexado ou destacado), centralizada e posicionada ACIMA da linha de botões.
+- Removido o botão de redimensionar da janela destacada (relatado causando duplicação de botões) - painel destacado agora tem tamanho fixo, só arrastável.
+- Corrigido o mesmo tipo de duplicação de botões relatado (com print de tela) ao clicar em "Reanexar": `preparar_conteudo` tem sub-layouts aninhados (título/ícones/ações), e a limpeza anterior só alcançava widgets diretos - título e botões antigos ficavam órfãos e visíveis por cima dos novos toda vez que o conteúdo era reconstruído na mesma janela. Limpeza agora é recursiva (`_limpar_layout`).
+- Arrastar a barra do painel ANEXADO agora move a janela principal junto (antes só movia o painel, "desgrudando" visualmente da barra de status enquanto ainda vinculado) - o painel continua seguindo a principal sozinho, então os dois andam como um bloco só.
+- Invertida a diagonal do alfinete "riscado" (Reanexar) - cruzava demais o corpo do emoji e ficava pouco legível.
+- Destacar um ticket, abrir outro (no anexado) e depois voltar no destacado deixava os dois "selecionados" ao mesmo tempo (painel anexado continuava aberto atrás da janela destacada trazida pra frente) - corrigido fechando o anexado sempre que uma janela destacada volta ao foco.
 
 ## [0.5.1] - 2026-08-15: Documentação em dia + origem do nome do repo
 
