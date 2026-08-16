@@ -30,6 +30,17 @@ class Persistencia(ABC):
     def salvar_posicao_janela(self, x: int, y: int) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def obter_analise_imagem(self, chave: str) -> str | None:
+        """Descrição (via visão) já extraída de um print de tela anexado ao
+        ticket - cacheada pra não chamar o modelo de visão de novo a cada
+        polling pro MESMO anexo (ver JiraProvider._obter_texto_para_analise)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def salvar_analise_imagem(self, chave: str, texto: str) -> None:
+        raise NotImplementedError
+
 
 class PersistenciaArquivo(Persistencia):
     """Uso standalone - um arquivo JSON próprio (padrão: ~/.argus/config.json),
@@ -68,4 +79,11 @@ class PersistenciaArquivo(Persistencia):
 
     def salvar_posicao_janela(self, x: int, y: int) -> None:
         self._dado["posicao_janela"] = [x, y]
+        self._salvar()
+
+    def obter_analise_imagem(self, chave: str) -> str | None:
+        return self._dado.get("analises_imagem", {}).get(chave)
+
+    def salvar_analise_imagem(self, chave: str, texto: str) -> None:
+        self._dado.setdefault("analises_imagem", {})[chave] = texto
         self._salvar()

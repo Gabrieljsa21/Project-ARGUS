@@ -24,10 +24,14 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 `/rest/api/3/project/NSD/statuses` - só valem PRA ESTE projeto (NSD); mudariam
 se um dia o fluxo for replicado em outro projeto Jira."""
 
+from typing import Callable
+
 import requests
 
 from ..modelos import Categoria, Ticket
 from ..persistencia import Persistencia
+from ..pontuacao import calcular_pontuacao_foco, detectar_urgencia_no_texto
+from ..seguranca import mascarar
 from .base import NotificacaoProvider
 
 CATEGORIAS_STATUS = [
@@ -39,7 +43,10 @@ CATEGORIAS_STATUS = [
 
 TIPO_VINCULO_DEV = "Problem/Incident"
 AUTORES_AUTOMATICOS_IGNORADOS = {"Automation for Jira"}
-CAMPOS_ISSUE = "summary,status,priority,updated,assignee,comment,issuelinks"
+# 🔥 description/attachment adicionados (2026-08-15) - antes só bastava pra
+# mostrar o ticket, agora a descrição/comentário/print alimentam a pontuação de
+# foco (ver pontuacao.py) e a detecção de urgência no texto livre.
+CAMPOS_ISSUE = "summary,status,priority,updated,assignee,comment,issuelinks,description,attachment"
 
 # 🔥 Prioridades que contam como "crítico" pra fala da GAIA (2026-08-15,
 # pedido do usuário: "critico pode considerar high tbm") - nomes reais do
@@ -51,11 +58,25 @@ PRIORIDADES_CRITICAS = {"Highest", "High"}
 
 
 class JiraProvider(NotificacaoProvider):
-    def __init__(self, base_url: str, email: str, api_token: str, persistencia: Persistencia):
+    def __init__(
+        self, base_url: str, email: str, api_token: str, persistencia: Persistencia,
+        descrever_imagem: Callable[[bytes], str] | None = None,
+    ):
         self._base_url = base_url.rstrip("/")
         self._auth = (email, api_token)
         self._persistencia = persistencia
+        # 🔥 Gancho OPCIONAL de visão (2026-08-15) - o Argus em si não tem
+        # dependência de LLM nenhuma (fica leve/usável standalone pelos colegas,
+        # sem exigir chave de IA). Quem quiser analisar print sem descrição
+        # (ver `_obter_texto_para_analise`) injeta essa função (ex.: a GAIA,
+        # com o `client_vision` dela já configurado); sem isso, o ticket só-print
+        # simplesmente não ganha pontuação extra de urgência por texto.
+        self._descrever_imagem = descrever_imagem
         self._minha_account_id = self._obter_meu_account_id()
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url
 
     def _obter(self, caminho: str, params: dict | None = None) -> dict:
         resposta = requests.get(f"{self._base_url}{caminho}", auth=self._auth, params=params, timeout=15)
@@ -94,6 +115,115 @@ class JiraProvider(NotificacaoProvider):
 
     def _eh_autor_automatico(self, nome_exibicao: str) -> bool:
         return nome_exibicao in AUTORES_AUTOMATICOS_IGNORADOS
+
+    # --- pontuação de foco: texto livre (descrição/comentário/print) + SLA ---
+
+    @staticmethod
+    def _texto_plano_adf(no: dict | None) -> str:
+        """Extrai só o texto puro de um nó ADF (Atlassian Document Format - é
+        assim que `description`/corpo de comentário vêm na API v3, um documento
+        rico em vez de string), varrendo recursivamente `content`. Não precisa
+        de fidelidade nenhuma (não é pra reexibir, só pra mascarar/detectar
+        urgência em cima) - só concatenar todo texto solto já basta."""
+        if not no:
+            return ""
+        pedacos = []
+
+        def _visitar(node):
+            if isinstance(node, dict):
+                if node.get("type") == "text":
+                    pedacos.append(node.get("text", ""))
+                for filho in node.get("content", []) or []:
+                    _visitar(filho)
+            elif isinstance(node, list):
+                for item in node:
+                    _visitar(item)
+
+        _visitar(no)
+        return " ".join(pedacos)
+
+    def _obter_sla_info(self, chave: str) -> dict | None:
+        """SLA REAL via Jira Service Management (`/rest/servicedeskapi/request/
+        {chave}/sla`), não um `duedate` estimado - confirmado contra a instância
+        real (2026-08-15) que esse endpoint responde pra este projeto. Usa
+        especificamente "Time to resolution" (o prazo geral do chamado, não o
+        de primeira resposta). Ticket sem SLA aplicável (ou já com o ciclo
+        fechado) devolve None - a pontuação simplesmente não ganha esse bônus."""
+        try:
+            dados = self._obter(f"/rest/servicedeskapi/request/{chave}/sla")
+        except requests.HTTPError:
+            return None
+        for metrica in dados.get("values", []):
+            if metrica.get("name") != "Time to resolution":
+                continue
+            ciclo = metrica.get("ongoingCycle")
+            if not ciclo:
+                return None
+            return {
+                "breached": bool(ciclo.get("breached")),
+                "restante_millis": ciclo.get("remainingTime", {}).get("millis", 0),
+            }
+        return None
+
+    def _ultimo_anexo_imagem(self, issue: dict) -> dict | None:
+        """O ÚLTIMO anexo de imagem (não o primeiro) - a API do Jira lista
+        anexos em ordem cronológica, e um ticket "Aguardando Cliente" pode
+        acumular vários prints ao longo da conversa; o mais recente é o
+        relevante pra analisar agora."""
+        anexos_imagem = [
+            a for a in issue["fields"].get("attachment", []) or []
+            if (a.get("mimeType") or "").startswith("image/")
+        ]
+        return anexos_imagem[-1] if anexos_imagem else None
+
+    def _baixar_anexo(self, url: str) -> bytes | None:
+        try:
+            resposta = requests.get(url, auth=self._auth, timeout=20)
+            resposta.raise_for_status()
+            return resposta.content
+        except requests.RequestException:
+            return None
+
+    def _obter_texto_para_analise(self, issue: dict, chave: str) -> str:
+        """Texto usado pra detectar urgência (ver pontuacao.py) - descrição +
+        último comentário + descrição do último print anexado (via
+        `self._descrever_imagem`, gancho opcional, ver __init__).
+
+        🔥 A imagem é analisada SEMPRE que existe (2026-08-15, pedido do
+        usuário: "ela tem de mandar a imagem independente se tem descrição ou
+        não") - não só quando texto/comentário vêm vazios. Um chamado pode ter
+        descrição escrita E um print que mostra o erro de verdade (o texto
+        sozinho às vezes não conta a urgência real). Resultado é CACHEADO por
+        anexo (`chave:id_do_anexo`, não só `chave`) - um print NOVO chegando
+        depois (ticket que ganha um segundo anexo) não reaproveita a análise
+        do anexo antigo; não chama visão de novo pro MESMO anexo a cada
+        polling."""
+        campos = issue["fields"]
+        texto = self._texto_plano_adf(campos.get("description")).strip()
+        comentarios = campos.get("comment", {}).get("comments", [])
+        if comentarios:
+            texto = f"{texto} {self._texto_plano_adf(comentarios[-1].get('body'))}".strip()
+
+        if self._descrever_imagem is None:
+            return texto
+
+        anexo = self._ultimo_anexo_imagem(issue)
+        if anexo is None:
+            return texto
+
+        chave_cache = f"{chave}:{anexo['id']}"
+        descricao_imagem = self._persistencia.obter_analise_imagem(chave_cache)
+        if descricao_imagem is None:
+            imagem_bytes = self._baixar_anexo(anexo["content"])
+            if imagem_bytes is None:
+                return texto
+            try:
+                descricao_imagem = self._descrever_imagem(imagem_bytes)
+            except Exception:
+                return texto
+            self._persistencia.salvar_analise_imagem(chave_cache, descricao_imagem)
+
+        return f"{texto} {descricao_imagem}".strip()
 
     def _estado_atual(self, issue: dict) -> dict:
         campos = issue["fields"]
@@ -147,16 +277,30 @@ class JiraProvider(NotificacaoProvider):
                 atual = self._estado_atual(issue_novidade)
                 visto = self._persistencia.obter_estado_ticket(chave_ticket)
                 novo, tipo_evento = self._classificar_evento(visto, atual)
+                prioridade = (campos.get("priority") or {}).get("name", "")
+
+                texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
+                urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
+                sla_info = self._obter_sla_info(chave_ticket)
+                pontuacao_foco = calcular_pontuacao_foco(prioridade, urgencia_no_texto, sla_info)
+
                 tickets.append(Ticket(
                     chave=chave_ticket,
                     resumo=campos["summary"],
                     status=campos["status"]["name"],
-                    prioridade=(campos.get("priority") or {}).get("name", ""),
+                    prioridade=prioridade,
                     url=f"{self._base_url}/browse/{chave_ticket}",
                     atualizado_em=campos["updated"],
                     novo=novo,
                     tipo_evento=tipo_evento,
+                    pontuacao_foco=pontuacao_foco,
+                    urgencia_no_texto=urgencia_no_texto,
                 ))
+            # 🔥 Ordena por pontuação de foco (2026-08-15, pedido do usuário: "pra
+            # eu saber qual focar") - maior pontuação primeiro, dentro de cada
+            # categoria (a JQL acima só define QUAIS tickets entram, não a ordem
+            # de exibição).
+            tickets.sort(key=lambda t: t.pontuacao_foco, reverse=True)
             categorias.append(Categoria(chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets))
         return categorias
 

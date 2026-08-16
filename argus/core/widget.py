@@ -600,7 +600,10 @@ class ArgusWidget(QWidget):
         peso = QFont.Bold if ticket.novo else QFont.Normal
         fonte = QFont(FONTE_BASE, TAMANHO_FONTE_TICKET, peso)
         sufixo = " ● NOVO" if ticket.novo else ""
-        texto_bruto = f"{ticket.chave} | {ticket.resumo}{sufixo}"
+        # 🔥 Pontuação de foco (2026-08-15) à frente da linha - pra ordenar
+        # visualmente "o que focar" sem precisar abrir cada ticket (a lista já
+        # vem ordenada pelo provider, ver JiraProvider.listar_categorias).
+        texto_bruto = f"[{ticket.pontuacao_foco}] {ticket.chave} | {ticket.resumo}{sufixo}"
         metricas = QFontMetrics(fonte)
         texto_elidido = metricas.elidedText(texto_bruto, Qt.ElideRight, largura_disponivel - 30)
         return _LinhaTicket(ticket, texto_elidido, fonte, self._abrir_ticket)
