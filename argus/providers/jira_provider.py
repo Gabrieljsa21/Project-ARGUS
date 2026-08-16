@@ -43,10 +43,24 @@ CATEGORIAS_STATUS = [
 
 TIPO_VINCULO_DEV = "Problem/Incident"
 AUTORES_AUTOMATICOS_IGNORADOS = {"Automation for Jira"}
+# 🔥 Campos extras pro painel de detalhes (2026-08-15, pedido do usuário: "com
+# as informações mais detalhadas do ticket... plataforma, organizations,
+# relator, responsavel, tipo de solicitação") - IDs confirmados direto contra
+# a instância real (`nordwareservices.atlassian.net`, projeto NSD) via MCP
+# Atlassian, mesmo processo já usado pros status (ver docstring do módulo):
+# customfield_14901 = "Plataforma", customfield_14601 = "Empresa",
+# customfield_10007 = objeto de request do JSM (`.requestType.name` é o "Tipo
+# de solicitação"). `reporter` é o "Relator" nativo do Jira.
+CAMPO_PLATAFORMA = "customfield_14901"
+CAMPO_EMPRESA = "customfield_14601"
+CAMPO_TIPO_SOLICITACAO = "customfield_10007"
 # 🔥 description/attachment adicionados (2026-08-15) - antes só bastava pra
 # mostrar o ticket, agora a descrição/comentário/print alimentam a pontuação de
 # foco (ver pontuacao.py) e a detecção de urgência no texto livre.
-CAMPOS_ISSUE = "summary,status,priority,updated,assignee,comment,issuelinks,description,attachment"
+CAMPOS_ISSUE = (
+    "summary,status,priority,updated,assignee,reporter,comment,issuelinks,"
+    f"description,attachment,{CAMPO_PLATAFORMA},{CAMPO_EMPRESA},{CAMPO_TIPO_SOLICITACAO}"
+)
 
 # 🔥 Prioridades que contam como "crítico" pra fala da GAIA (2026-08-15,
 # pedido do usuário: "critico pode considerar high tbm") - nomes reais do
@@ -162,6 +176,11 @@ class JiraProvider(NotificacaoProvider):
             return {
                 "breached": bool(ciclo.get("breached")),
                 "restante_millis": ciclo.get("remainingTime", {}).get("millis", 0),
+                # 🔥 String pronta do próprio Jira (2026-08-15, pro painel de
+                # detalhes) - ex.: "5h 4m" - evita reimplementar formatação de
+                # duração; o Jira já calcula isso considerando horário
+                # comercial/pausas, que `restante_millis` sozinho não reflete.
+                "restante_texto": ciclo.get("remainingTime", {}).get("friendly", ""),
             }
         return None
 
@@ -224,6 +243,20 @@ class JiraProvider(NotificacaoProvider):
             self._persistencia.salvar_analise_imagem(chave_cache, descricao_imagem)
 
         return f"{texto} {descricao_imagem}".strip()
+
+    def _extrair_campos_detalhe(self, campos: dict) -> dict:
+        """Campos "de vitrine" pro painel de detalhes (2026-08-15) - nenhum
+        deles influencia novidade/pontuação, só exibição. `.get(..., {})` em
+        cada custom field porque um ticket pode simplesmente não ter aquele
+        campo preenchido (JSM não obriga)."""
+        tipo_solicitacao_obj = campos.get(CAMPO_TIPO_SOLICITACAO) or {}
+        return {
+            "relator": (campos.get("reporter") or {}).get("displayName", ""),
+            "responsavel": (campos.get("assignee") or {}).get("displayName", ""),
+            "empresa": (campos.get(CAMPO_EMPRESA) or {}).get("value", ""),
+            "plataforma": (campos.get(CAMPO_PLATAFORMA) or {}).get("value", ""),
+            "tipo_solicitacao": (tipo_solicitacao_obj.get("requestType") or {}).get("name", ""),
+        }
 
     def _estado_atual(self, issue: dict) -> dict:
         campos = issue["fields"]
@@ -300,6 +333,9 @@ class JiraProvider(NotificacaoProvider):
                     "pontuacao_foco": pontuacao_foco,
                     "urgencia_no_texto": urgencia_no_texto,
                     "atual": atual,
+                    "detalhe": self._extrair_campos_detalhe(campos),
+                    "sla_texto": (sla_info or {}).get("restante_texto", ""),
+                    "sla_estourado": bool(sla_info and sla_info.get("breached")),
                 })
             dados.append((chave_cat, nome_cat, tickets_brutos))
         return dados
@@ -328,6 +364,9 @@ class JiraProvider(NotificacaoProvider):
                     tipo_evento=tipo_evento,
                     pontuacao_foco=tb["pontuacao_foco"],
                     urgencia_no_texto=tb["urgencia_no_texto"],
+                    sla_texto=tb["sla_texto"],
+                    sla_estourado=tb["sla_estourado"],
+                    **tb["detalhe"],
                 ))
             # 🔥 Ordena por pontuação de foco (2026-08-15, pedido do usuário: "pra
             # eu saber qual focar") - maior pontuação primeiro, dentro de cada
@@ -345,3 +384,27 @@ class JiraProvider(NotificacaoProvider):
         issue_novidade = self._resolver_issue_para_novidade(issue)
         estado = self._estado_atual(issue_novidade)
         self._persistencia.salvar_estado_ticket(chave_ticket, estado)
+
+    def obter_detalhes_completos(self, chave_ticket: str) -> dict:
+        """Busca SOB DEMANDA (só quando o usuário abre o painel de detalhes de
+        um ticket, ver core/widget.py) - description + TODOS os comentários,
+        diferente da checagem periódica (`buscar_dados_brutos`), que só olha o
+        ÚLTIMO comentário pra detectar novidade. Pensado pro botão "Analisar"
+        (2026-08-15, pedido do usuário: "hoje eu costumo copiar toda a
+        descrição do ticket junto com toda a resposta que um dev me deu, e
+        colar no gpt") - dá pro consumidor (ex.: GAIA) montar o mesmo material
+        que o usuário já cola manualmente, sem chamada extra de rede."""
+        issue = self._obter_issue_completo(chave_ticket)
+        campos = issue["fields"]
+        comentarios = campos.get("comment", {}).get("comments", [])
+        return {
+            "descricao": self._texto_plano_adf(campos.get("description")),
+            "comentarios": [
+                {
+                    "autor": (comentario.get("author") or {}).get("displayName", ""),
+                    "texto": self._texto_plano_adf(comentario.get("body")),
+                    "criado_em": comentario.get("created", ""),
+                }
+                for comentario in comentarios
+            ],
+        }

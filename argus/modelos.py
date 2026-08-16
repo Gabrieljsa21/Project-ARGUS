@@ -26,6 +26,17 @@ class Ticket:
     # o valor neutro (prioridade "Medium") usado quando ainda não foi calculado.
     pontuacao_foco: int = 50
     urgencia_no_texto: bool = False
+    # 🔥 Detalhe pro painel de detalhes (2026-08-15, pedido do usuário: "abra
+    # um modal a direita, com as informações mais detalhadas do ticket") - só
+    # os campos rápidos de listar (já vêm na busca periódica); descrição +
+    # TODOS os comentários são sob demanda, ver JiraProvider.obter_detalhes_completos.
+    relator: str = ""
+    responsavel: str = ""
+    empresa: str = ""
+    plataforma: str = ""
+    tipo_solicitacao: str = ""
+    sla_texto: str = ""
+    sla_estourado: bool = False
 
 
 @dataclass

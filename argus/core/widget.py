@@ -18,9 +18,12 @@ janela)."""
 import os
 import webbrowser
 
-from PySide6.QtCore import Qt, QTimer, QPointF, QEvent, QObject
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QPointF, QEvent, QObject
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QStyleOption, QStyle, QApplication
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QStyleOption, QStyle, QApplication,
+    QDialog, QTextEdit, QPlainTextEdit, QPushButton,
+)
 
 from .tema import (
     SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
@@ -70,6 +73,15 @@ INTERVALO_TIMER_ANEL_MS = 30
 CAMINHO_ICONE_ALAVANCA = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "assets", "icone_argus.png"
 )
+
+# 🔥 Painel de detalhes (2026-08-15, pedido do usuário: "quando clicar em um
+# card, abra um modal a direita, com as informações mais detalhadas do
+# ticket... botão pra abrir ticket e um pra analisar") - janela flutuante
+# PRÓPRIA (não embutida na janela principal, ver ArgusWidget) posicionada ao
+# lado, com espaço suficiente pra rótulo+valor sem elidir demais.
+LARGURA_PAINEL_DETALHES = 340
+ESPACAMENTO_PAINEL_DETALHES = 8
+TAMANHO_FONTE_DETALHE = 11
 
 # 🔥 Glow no chip aberto (2026-08-15) - variante "5c" escolhida: junto com o
 # destaque já existente (fundo HIGHLIGHT_COLOR + borda dourada), um brilho
@@ -308,10 +320,12 @@ class _ChipCategoria(_AreaComHover):
 
 
 class _LinhaTicket(QWidget):
-    """Uma linha de ticket na lista - campo INTEIRO clicável (abre o ticket
-    no navegador e marca como visto), com destaque sutil ao passar o mouse.
-    Sem ícone/botão separado no final (2026-08-15, pedido do usuário: "acho
-    desnecessário esse botão... coloca o efeito dela no próprio campo da
+    """Uma linha de ticket na lista - campo INTEIRO clicável, com destaque
+    sutil ao passar o mouse. Clique abre o painel de detalhes (2026-08-15,
+    pedido do usuário - ver `ArgusWidget._ticket_clicado`/`_PainelDetalhesTicket`),
+    não mais o navegador direto - abrir o link virou um botão dentro do
+    painel. Sem ícone/botão separado no final (2026-08-15, pedido do usuário:
+    "acho desnecessário esse botão... coloca o efeito dela no próprio campo da
     lista") - hover + cursor de mão já comunicam que a linha inteira é
     clicável, sem precisar de um alvo pequeno separado."""
 
@@ -374,8 +388,257 @@ class _LinhaTicket(QWidget):
         self._ao_clicar(self._ticket)
 
 
+class _TarefaSegundoPlano(QThread):
+    """QThread genérica (2026-08-15) - roda `func` fora da thread da UI, pra
+    não travar a janela durante uma chamada de rede (buscar comentários) ou de
+    LLM (gerar o rascunho de análise). `concluido`/`erro` disparam de volta na
+    thread da UI (padrão normal de sinal do Qt entre threads)."""
+    concluido = Signal(object)
+    erro = Signal(str)
+
+    def __init__(self, func, parent=None):
+        super().__init__(parent)
+        self._func = func
+
+    def run(self):
+        try:
+            resultado = self._func()
+        except Exception as e:
+            self.erro.emit(str(e))
+        else:
+            self.concluido.emit(resultado)
+
+
+def _botao_estilizado(texto, cor=GAIA_GOLD) -> QPushButton:
+    """Botão mínimo próprio do Argus (2026-08-15) - o Argus não importa a
+    fábrica de widgets da GAIA (fica standalone/leve pros colegas, ver
+    docstring do módulo), então é um QPushButton simples com o mesmo
+    tratamento visual de sempre (SURFACE_COLOR/hover) em vez de reaproveitar
+    algo de fora do repositório."""
+    botao = QPushButton(texto)
+    botao.setCursor(Qt.PointingHandCursor)
+    botao.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE))
+    botao.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {SURFACE_COLOR}; color: {cor};
+            border: 1px solid {BORDA_SUTIL}; border-radius: 8px; padding: 6px 12px;
+        }}
+        QPushButton:hover {{ background-color: {HIGHLIGHT_COLOR}; border-color: {cor}; }}
+    """)
+    return botao
+
+
+class _DialogoComentario(QDialog):
+    """Pergunta um comentário/instrução opcional ANTES de mandar o ticket pra
+    análise (2026-08-15, pedido do usuário: "fazer a análise permitindo
+    colocar um comentário") - texto livre, some direto na instrução da LLM
+    (ver GAIA, quem injeta `analisar_ticket`), nunca vira comentário de
+    verdade no Jira sozinho."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Analisar ticket")
+        self.setStyleSheet(f"background-color: {SURFACE_COLOR};")
+        self.resize(360, 200)
+        self.comentario = None
+
+        lay = QVBoxLayout(self)
+        rotulo = QLabel("Comentário/instrução adicional (opcional):")
+        rotulo.setStyleSheet(f"color: {TEXT_DIM};")
+        lay.addWidget(rotulo)
+
+        self._campo = QPlainTextEdit()
+        self._campo.setStyleSheet(
+            f"background-color: {SURFACE_COLOR}; color: {TEXT_COLOR}; border: 1px solid {BORDA_SUTIL}; border-radius: 6px;"
+        )
+        lay.addWidget(self._campo, 1)
+
+        linha_botoes = QHBoxLayout()
+        linha_botoes.addStretch(1)
+        botao_cancelar = _botao_estilizado("Cancelar", cor=TEXT_DIM)
+        botao_cancelar.clicked.connect(self.reject)
+        linha_botoes.addWidget(botao_cancelar)
+        botao_analisar = _botao_estilizado("Analisar")
+        botao_analisar.clicked.connect(self._confirmar)
+        linha_botoes.addWidget(botao_analisar)
+        lay.addLayout(linha_botoes)
+
+    def _confirmar(self):
+        self.comentario = self._campo.toPlainText().strip()
+        self.accept()
+
+
+class _DialogoRascunho(QDialog):
+    """Mostra o rascunho gerado pra revisar/editar antes de usar (2026-08-15,
+    escolha do usuário entre as opções: dialog de revisão em vez de copiar
+    direto ou salvar em arquivo) - texto fica editável (o usuário pode
+    ajustar antes de copiar), botão "Copiar" joga pra área de transferência."""
+
+    def __init__(self, texto, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Rascunho de resposta")
+        self.setStyleSheet(f"background-color: {SURFACE_COLOR};")
+        self.resize(460, 360)
+
+        lay = QVBoxLayout(self)
+        self._texto = QTextEdit()
+        self._texto.setPlainText(texto)
+        self._texto.setStyleSheet(
+            f"background-color: {SURFACE_COLOR}; color: {TEXT_COLOR}; border: 1px solid {BORDA_SUTIL}; border-radius: 6px;"
+        )
+        lay.addWidget(self._texto, 1)
+
+        linha_botoes = QHBoxLayout()
+        linha_botoes.addStretch(1)
+        botao_fechar = _botao_estilizado("Fechar", cor=TEXT_DIM)
+        botao_fechar.clicked.connect(self.reject)
+        linha_botoes.addWidget(botao_fechar)
+        botao_copiar = _botao_estilizado("Copiar")
+        botao_copiar.clicked.connect(self._copiar)
+        linha_botoes.addWidget(botao_copiar)
+        lay.addLayout(linha_botoes)
+
+    def _copiar(self):
+        QApplication.clipboard().setText(self._texto.toPlainText())
+
+
+class _PainelDetalhesTicket(QWidget):
+    """Janela flutuante própria (2026-08-15, pedido do usuário) com os campos
+    detalhados de UM ticket + os botões "Abrir ticket"/"Analisar" - SEPARADA
+    da janela principal (diferente da lista de tickets, que é embutida) pra
+    não espremer texto longo (Empresa/Plataforma/Tipo de solicitação) na
+    coluna estreita da barra."""
+
+    def __init__(self, ao_abrir_ticket, obter_detalhes_completos, analisar_ticket, parent=None):
+        super().__init__(parent)
+        self._ao_abrir_ticket = ao_abrir_ticket
+        self._obter_detalhes_completos = obter_detalhes_completos
+        self._analisar_ticket = analisar_ticket
+        self._ticket = None
+        self._tarefa = None
+
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedWidth(LARGURA_PAINEL_DETALHES)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(16, 14, 16, 14)
+        self._layout.setSpacing(6)
+        self.setVisible(False)
+
+    def mostrar(self, ticket, x, y):
+        self._ticket = ticket
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        linha_topo = QHBoxLayout()
+        cor_prioridade = CORES_PRIORIDADE.get(ticket.prioridade, TEXT_COLOR)
+        titulo = QLabel(f'<span style="color:{cor_prioridade};">{ticket.chave}</span>')
+        titulo.setTextFormat(Qt.RichText)
+        titulo.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_NOME, QFont.Bold))
+        titulo.setStyleSheet("background: transparent; border: none;")
+        linha_topo.addWidget(titulo)
+        linha_topo.addStretch(1)
+        botao_fechar = QLabel("✕")
+        botao_fechar.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
+        botao_fechar.setCursor(Qt.PointingHandCursor)
+        botao_fechar.mousePressEvent = lambda evento: self.esconder()
+        linha_topo.addWidget(botao_fechar)
+        self._layout.addLayout(linha_topo)
+
+        resumo = QLabel(ticket.resumo)
+        resumo.setWordWrap(True)
+        resumo.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE, QFont.Bold))
+        resumo.setStyleSheet(f"color: {TEXT_COLOR}; background: transparent; border: none;")
+        self._layout.addWidget(resumo)
+
+        cor_sla = "#f38ba8" if ticket.sla_estourado else TEXT_COLOR
+        campos = [
+            ("Time to resolution", ticket.sla_texto, cor_sla),
+            ("Plataforma", ticket.plataforma, TEXT_COLOR),
+            ("Empresa", ticket.empresa, TEXT_COLOR),
+            ("Relator", ticket.relator, TEXT_COLOR),
+            ("Responsável", ticket.responsavel, TEXT_COLOR),
+            ("Tipo de solicitação", ticket.tipo_solicitacao, TEXT_COLOR),
+            ("Status", ticket.status, TEXT_COLOR),
+        ]
+        for rotulo, valor, cor_valor in campos:
+            if not valor:
+                continue
+            self._layout.addWidget(self._linha_campo(rotulo, valor, cor_valor))
+
+        linha_botoes = QHBoxLayout()
+        botao_abrir = _botao_estilizado("Abrir ticket")
+        botao_abrir.clicked.connect(lambda: self._ao_abrir_ticket(self._ticket))
+        linha_botoes.addWidget(botao_abrir)
+        # 🔥 "Analisar" precisa das DUAS peças (2026-08-15) - buscar
+        # descrição+comentários completos (`obter_detalhes_completos`, do
+        # provider) E o gancho de LLM (`analisar_ticket`, injetado por quem
+        # sobe o widget) - sem qualquer uma delas, não tem como gerar nada.
+        if self._obter_detalhes_completos is not None and self._analisar_ticket is not None:
+            self._botao_analisar = _botao_estilizado("Analisar")
+            self._botao_analisar.clicked.connect(self._iniciar_analise)
+            linha_botoes.addWidget(self._botao_analisar)
+        self._layout.addLayout(linha_botoes)
+
+        self.adjustSize()
+        self.move(x, y)
+        self.setVisible(True)
+        self.raise_()
+
+    def esconder(self):
+        self.setVisible(False)
+
+    def _linha_campo(self, rotulo, valor, cor_valor) -> QWidget:
+        linha = QHBoxLayout()
+        linha.setSpacing(6)
+        w = QWidget()
+        w.setLayout(linha)
+        lbl_rotulo = QLabel(f"{rotulo}:")
+        lbl_rotulo.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE))
+        lbl_rotulo.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
+        linha.addWidget(lbl_rotulo)
+        lbl_valor = QLabel(str(valor))
+        lbl_valor.setWordWrap(True)
+        lbl_valor.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE))
+        lbl_valor.setStyleSheet(f"color: {cor_valor}; background: transparent; border: none;")
+        linha.addWidget(lbl_valor, 1)
+        return w
+
+    def _iniciar_analise(self):
+        dialogo = _DialogoComentario(self)
+        if dialogo.exec() != QDialog.Accepted:
+            return
+        comentario_extra = dialogo.comentario or ""
+        ticket = self._ticket
+        self._botao_analisar.setEnabled(False)
+        self._botao_analisar.setText("Analisando...")
+
+        def _tarefa():
+            detalhes = self._obter_detalhes_completos(ticket.chave)
+            return self._analisar_ticket(ticket, detalhes, comentario_extra)
+
+        self._tarefa = _TarefaSegundoPlano(_tarefa, self)
+        self._tarefa.concluido.connect(self._analise_concluida)
+        self._tarefa.erro.connect(self._analise_falhou)
+        self._tarefa.start()
+
+    def _analise_concluida(self, rascunho):
+        self._botao_analisar.setEnabled(True)
+        self._botao_analisar.setText("Analisar")
+        _DialogoRascunho(rascunho, self).exec()
+
+    def _analise_falhou(self, mensagem):
+        self._botao_analisar.setEnabled(True)
+        self._botao_analisar.setText("Analisar")
+        _DialogoRascunho(f"Não consegui analisar: {mensagem}", self).exec()
+
+
 class ArgusWidget(QWidget):
-    def __init__(self, provider, persistencia):
+    def __init__(self, provider, persistencia, analisar_ticket=None):
         super().__init__()
         self._provider = provider
         self._persistencia = persistencia
@@ -384,6 +647,17 @@ class ArgusWidget(QWidget):
         self._chips = []
         self._chave_categoria_aberta = None
         self._fixado = False
+        # 🔥 Painel de detalhes (2026-08-15, pedido do usuário) - gancho
+        # OPCIONAL de análise (mesmo espírito do `descrever_imagem` do
+        # JiraProvider) - o Argus em si não tem LLM nenhuma; quem quiser o
+        # botão "Analisar" (ex.: a GAIA, com o Groq dela já configurado)
+        # injeta essa função. `getattr` (não `NotificacaoProvider` exigir isso
+        # de TODO provider) porque nem todo provider (ex.: `ProviderFalso` dos
+        # testes) precisa saber buscar detalhe completo - sem ela, o painel
+        # mostra só "Abrir ticket".
+        self._painel_detalhes = _PainelDetalhesTicket(
+            self._abrir_ticket, getattr(self._provider, "obter_detalhes_completos", None), analisar_ticket, self,
+        )
 
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -659,7 +933,17 @@ class ArgusWidget(QWidget):
         metricas = QFontMetrics(fonte)
         largura_resumo = max(0, largura_disponivel - 30 - metricas.horizontalAdvance(prefixo_plano))
         resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}", Qt.ElideRight, largura_resumo)
-        return _LinhaTicket(ticket, resumo_elidido, fonte, self._abrir_ticket)
+        return _LinhaTicket(ticket, resumo_elidido, fonte, self._ticket_clicado)
+
+    def _ticket_clicado(self, ticket):
+        """Clicar num ticket agora ABRE O PAINEL DE DETALHES (2026-08-15,
+        pedido do usuário) em vez de ir direto pro navegador - abrir o link
+        de verdade virou um botão dentro do painel ("Abrir ticket", ver
+        `_abrir_ticket`). Posicionado à DIREITA da janela principal (mesma
+        borda/topo), fora da coluna estreita da barra de categorias."""
+        self._painel_detalhes.mostrar(
+            ticket, self.x() + self.width() + ESPACAMENTO_PAINEL_DETALHES, self.y(),
+        )
 
     def _abrir_ticket(self, ticket):
         webbrowser.open(ticket.url)
