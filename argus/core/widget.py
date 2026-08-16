@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScroll
 
 from .tema import (
     SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
-    GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE,
+    GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
 )
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 
@@ -315,7 +315,7 @@ class _LinhaTicket(QWidget):
     lista") - hover + cursor de mão já comunicam que a linha inteira é
     clicável, sem precisar de um alvo pequeno separado."""
 
-    def __init__(self, ticket, texto_elidido, fonte, ao_clicar, parent=None):
+    def __init__(self, ticket, resumo_elidido, fonte, ao_clicar, parent=None):
         super().__init__(parent)
         self._ticket = ticket
         self._ao_clicar = ao_clicar
@@ -328,10 +328,28 @@ class _LinhaTicket(QWidget):
         layout_linha.setContentsMargins(8, 3, 8, 3)
 
         cor_texto = TEXT_COLOR if ticket.novo else TEXT_DIM
-        texto = QLabel(texto_elidido)
-        texto.setFont(fonte)
-        texto.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
-        layout_linha.addWidget(texto, 1)
+        cor_prioridade = CORES_PRIORIDADE.get(ticket.prioridade, cor_texto)
+
+        # 🔥 Cor por prioridade (2026-08-15, pedido do usuário: "a cor da fonte
+        # representa exclusivamente a prioridade cadastrada no Jira") - só no
+        # código (rich text HTML no QLabel), o resumo continua na cor normal
+        # de sempre pra não virar uma parede de cor e perder legibilidade. Sem
+        # escrever o NOME da prioridade (2026-08-15, "não precisa escrever
+        # prioridade no nome, já tem legenda das cores") - a cor sozinha já
+        # basta, a legenda no topo do painel explica o que cada uma significa.
+        prefixo = QLabel(
+            f'<span style="color:{cor_texto};">[{ticket.pontuacao_foco}]</span> '
+            f'<span style="color:{cor_prioridade};">{ticket.chave}</span>'
+        )
+        prefixo.setTextFormat(Qt.RichText)
+        prefixo.setFont(fonte)
+        prefixo.setStyleSheet("background: transparent; border: none;")
+        layout_linha.addWidget(prefixo)
+
+        resumo = QLabel(resumo_elidido)
+        resumo.setFont(fonte)
+        resumo.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
+        layout_linha.addWidget(resumo, 1)
 
         self._atualizar_estilo()
 
@@ -567,6 +585,7 @@ class ArgusWidget(QWidget):
         cabecalho.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_CABECALHO))
         cabecalho.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
         self._layout_painel.addWidget(cabecalho)
+        self._layout_painel.addWidget(self._legenda_prioridade())
 
         if not categoria.tickets:
             vazio = QLabel("Nada por aqui.")
@@ -609,17 +628,38 @@ class ArgusWidget(QWidget):
 
         self._layout_painel.addWidget(area)
 
+    def _legenda_prioridade(self) -> QWidget:
+        """Legenda das cores de prioridade (2026-08-15, pedido do usuário:
+        "seria bom também se ficasse claro essas regras de definir prioridade
+        em um local visível") - fica junto da própria lista de tickets, onde
+        a cor realmente aparece, em vez de escondida num modal de
+        configuração separado que o usuário precisaria lembrar de abrir."""
+        pedacos = "&nbsp;&nbsp;".join(
+            f'<span style="color:{cor};">●</span> {nome}'
+            for nome, cor in CORES_PRIORIDADE.items()
+        )
+        legenda = QLabel(pedacos)
+        legenda.setTextFormat(Qt.RichText)
+        legenda.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_CABECALHO))
+        legenda.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
+        return legenda
+
     def _linha_ticket(self, ticket, largura_disponivel) -> QWidget:
         peso = QFont.Bold if ticket.novo else QFont.Normal
         fonte = QFont(FONTE_BASE, TAMANHO_FONTE_TICKET, peso)
         sufixo = " ● NOVO" if ticket.novo else ""
         # 🔥 Pontuação de foco (2026-08-15) à frente da linha - pra ordenar
         # visualmente "o que focar" sem precisar abrir cada ticket (a lista já
-        # vem ordenada pelo provider, ver JiraProvider.listar_categorias).
-        texto_bruto = f"[{ticket.pontuacao_foco}] {ticket.chave} | {ticket.resumo}{sufixo}"
+        # vem ordenada pelo provider, ver JiraProvider.listar_categorias). Só
+        # o resumo elide (o prefixo colorido por prioridade é sempre curto o
+        # bastante pra caber inteiro) - a largura medida aqui é em cima do
+        # texto PLANO (sem HTML), `_LinhaTicket` que monta o rich text de
+        # verdade a partir do ticket.
+        prefixo_plano = f"[{ticket.pontuacao_foco}] {ticket.chave}  "
         metricas = QFontMetrics(fonte)
-        texto_elidido = metricas.elidedText(texto_bruto, Qt.ElideRight, largura_disponivel - 30)
-        return _LinhaTicket(ticket, texto_elidido, fonte, self._abrir_ticket)
+        largura_resumo = max(0, largura_disponivel - 30 - metricas.horizontalAdvance(prefixo_plano))
+        resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}", Qt.ElideRight, largura_resumo)
+        return _LinhaTicket(ticket, resumo_elidido, fonte, self._abrir_ticket)
 
     def _abrir_ticket(self, ticket):
         webbrowser.open(ticket.url)
