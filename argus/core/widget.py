@@ -13,21 +13,41 @@ aberto até clicar de novo. Paleta copiada do Painel da GAIA (`core/tema.py`).
 
 A personagem/animação continua opcional e decorativa - `_Alavanca` é só o
 lugar-reservado dela (clique alterna novidades/total, arrastar move a
-janela)."""
+janela).
+
+🔥 Painel de detalhes ANEXADO/DESTACADO (2026-08-15/16, ver
+argus_painel_detalhes_ticket.md) - o painel de detalhes de um ticket nasceu
+como janela flutuante própria sempre substituída do zero a cada clique;
+depois de uma reescrita com crossfade animado que se mostrou frágil em uso
+real (relatado pelo usuário: "tickets se sobrepondo", "não troca quando
+seleciono outro"), foi simplificado: clicar num ticket ANEXADO fecha o
+painel atual (se houver) e abre um novo do zero, sem animação. Pode ser
+DESTACADO (ação do usuário) virando janela independente ARRASTÁVEL (via
+pequena barra acima dos botões) presa a um ticket específico, e cada ticket
+nunca tem mais de UMA instância aberta (anexada OU destacada, nunca as
+duas). Botões/campos seguem o padrão visual da GAIA (`_BotaoIcone`, `Switch`,
+`SpinboxCapsula`, ver `_DialogoConfiguracoes`)."""
 
 import os
 import webbrowser
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QPointF, QEvent, QObject
-from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient
+from PySide6.QtCore import (
+    Qt, QTimer, QThread, Signal, QPointF, QPoint, QRect, QSize, QEvent, QObject,
+    QPropertyAnimation, QEasingCurve, Property,
+)
+from PySide6.QtGui import (
+    QPainter, QPainterPath, QPixmap, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient,
+    QGuiApplication, QIntValidator,
+)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QStyleOption, QStyle, QApplication,
-    QDialog, QTextEdit, QPlainTextEdit, QPushButton,
+    QDialog, QTextEdit, QPlainTextEdit, QPushButton, QLineEdit, QFrame, QCheckBox,
 )
 
 from .tema import (
-    SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
-    GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
+    BG_COLOR, SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
+    GAIA_GOLD, GAIA_GOLD_HOVER, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
+    cor_com_alpha,
 )
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 
@@ -76,17 +96,118 @@ CAMINHO_ICONE_ALAVANCA = os.path.join(
 
 # 🔥 Painel de detalhes (2026-08-15, pedido do usuário: "quando clicar em um
 # card, abra um modal a direita, com as informações mais detalhadas do
-# ticket... botão pra abrir ticket e um pra analisar") - janela flutuante
-# PRÓPRIA (não embutida na janela principal, ver ArgusWidget) posicionada ao
-# lado, com espaço suficiente pra rótulo+valor sem elidir demais.
+# ticket... botão pra abrir ticket e um pra analisar") - largura fixa
+# enquanto ANEXADO, com espaço suficiente pra rótulo+valor sem elidir demais.
 LARGURA_PAINEL_DETALHES = 340
 ESPACAMENTO_PAINEL_DETALHES = 8
 TAMANHO_FONTE_DETALHE = 11
+
+# 🔥 Anexado/Destacado (2026-08-15, ver argus_painel_detalhes_ticket.md) -
+# constantes da reescrita do painel de detalhes como extensão visual do
+# Argus (em vez de janela flutuante desconectada, sempre recriada do zero).
+MARGEM_VERTICAL_TELA_PAINEL_DETALHES = 24
+RESERVA_CABECALHO_ACOES_PAINEL_DETALHES = 170
+ALTURA_MINIMA_PAINEL_DETALHES = 160
+DURACAO_PULSO_ATENCAO_MS = 900
+INTERVALO_TIMER_PULSO_ATENCAO_MS = 30
+LIMITE_JANELAS_DESTACADAS_PADRAO = 5
+# 🔥 Cascata entre janelas destacadas (2026-08-16, correção de bug relatado
+# pelo usuário: "os tickets estao se sobrepondo ao selecionar varios" - a
+# geometria lembrada era ÚNICA e compartilhada, então destacar 2+ tickets
+# seguidos sem arrastar nenhum antes fazia as janelas nascerem exatamente
+# empilhadas, indistinguíveis uma da outra) - cada nova janela destacada
+# soma este passo × quantas já estão abertas no momento, igual ao "cascade"
+# de janela que o próprio Windows faz.
+PASSO_CASCATA_JANELAS_DESTACADAS = 32
+# 🔥 Chacoalhada de atenção - "pode existir como opção configurável, evitando
+# uso frequente" (pedido do usuário) - desligada por padrão; ligável em
+# tempo real pelo menu de Configurações (ver `_DialogoConfiguracoes`), este
+# valor aqui é só o padrão de fábrica antes de qualquer config salva.
+ATIVAR_CHACOALHADA_ATENCAO = False
 
 # 🔥 Glow no chip aberto (2026-08-15) - variante "5c" escolhida: junto com o
 # destaque já existente (fundo HIGHLIGHT_COLOR + borda dourada), um brilho
 # suave por trás reforça visualmente qual categoria está aberta.
 ALPHA_GLOW_ABERTA = 60
+
+
+def _configurar_janela_flutuante(widget) -> dict:
+    """Aplica o mesmo tratamento de janela flutuante (sem borda, transparente,
+    cantos nativos + Acrylic/Mica) usado tanto pela janela principal quanto
+    pelo painel de detalhes - fatorado (2026-08-15) pra não duplicar a mesma
+    sequência de chamadas DWM/flags duas vezes. `winId()` força a criação do
+    handle nativo - só depois disso a chamada DWM funciona."""
+    widget.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+    widget.setAttribute(Qt.WA_TranslucentBackground)
+    widget.winId()
+    cantos_ok = aplicar_cantos_redondos(widget)
+    remover_cor_borda(widget)
+    mica_ok = ATIVAR_MICA and aplicar_mica(widget)
+    acrylic_ok = not mica_ok and ATIVAR_ACRYLIC and aplicar_acrylic(widget, SURFACE_COLOR, ALPHA_ACRYLIC)
+    return {"cantos_ok": cantos_ok, "mica_ok": mica_ok, "acrylic_ok": acrylic_ok}
+
+
+def _pintar_fundo_janela(widget, pintor, estado: dict):
+    """🔥 Com cantos nativos do DWM (`cantos_ok`), o Windows já recorta a
+    janela pro formato arredondado - só precisa preencher um retângulo
+    normal, sem `QPainterPath`/`setMask` nenhum. Sem suporte, cai pro desenho
+    manual de sempre. Com Acrylic aplicado de verdade (`acrylic_ok`), o
+    preenchimento próprio é pulado por completo (só a borda sutil é
+    desenhada) pra deixar o blur nativo do Windows aparecer."""
+    if estado["acrylic_ok"]:
+        pintor.setPen(QColor(BORDA_SUTIL))
+        if estado["cantos_ok"]:
+            pintor.drawRect(widget.rect().adjusted(0, 0, -1, -1))
+        else:
+            caminho = QPainterPath()
+            caminho.addRoundedRect(widget.rect(), RAIO_CANTO, RAIO_CANTO)
+            pintor.drawPath(caminho)
+        return
+
+    cor_fundo = QColor(SURFACE_COLOR)
+    cor_fundo.setAlpha(ALPHA_FUNDO_COM_MICA if estado["mica_ok"] else ALPHA_FUNDO_SEM_MICA)
+
+    if estado["cantos_ok"]:
+        pintor.fillRect(widget.rect(), cor_fundo)
+        return
+
+    caminho = QPainterPath()
+    caminho.addRoundedRect(widget.rect(), RAIO_CANTO, RAIO_CANTO)
+    pintor.fillPath(caminho, cor_fundo)
+    pintor.setPen(QColor(BORDA_SUTIL))
+    pintor.drawPath(caminho)
+
+
+def _aplicar_mascara_arredondada(widget):
+    caminho = QPainterPath()
+    caminho.addRoundedRect(widget.rect(), RAIO_CANTO, RAIO_CANTO)
+    widget.setMask(QRegion(caminho.toFillPolygon().toPolygon()))
+
+
+def _limpar_layout(layout):
+    """Limpa um `QLayout` RECURSIVAMENTE - inclusive sub-layouts aninhados
+    via `addLayout` (2026-08-16, causa raiz real do bug relatado: "quando
+    clico no desfixar ele zoa os botões, como acontecia com o redimensionar
+    antes de removermos"). `layout.takeAt(0)` devolve um item que pode ser um
+    WIDGET direto OU um LAYOUT aninhado - `item.widget()` só devolve algo no
+    primeiro caso; sem recursão, widgets DENTRO de um sub-layout (ex.:
+    `linha_topo`/`linha_arraste`/`linha_botoes` de
+    `_PainelDetalhesTicket.preparar_conteudo`) nunca eram escondidos nem
+    destruídos - ficavam órfãos e VISÍVEIS na posição antiga, sobrepostos ao
+    conteúdo novo que acabou de ocupar aquele espaço (mesmo bug de fundo já
+    corrigido em `_reconstruir_barra`/`_preencher_painel`, que só tinham
+    widgets diretos - `preparar_conteudo` é o único lugar com sub-layouts,
+    por isso escapou daquela correção)."""
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget:
+            widget.hide()
+            widget.deleteLater()
+            continue
+        sublayout = item.layout()
+        if sublayout:
+            _limpar_layout(sublayout)
 
 
 class _Alavanca(QWidget):
@@ -327,13 +448,21 @@ class _LinhaTicket(QWidget):
     painel. Sem ícone/botão separado no final (2026-08-15, pedido do usuário:
     "acho desnecessário esse botão... coloca o efeito dela no próprio campo da
     lista") - hover + cursor de mão já comunicam que a linha inteira é
-    clicável, sem precisar de um alvo pequeno separado."""
+    clicável, sem precisar de um alvo pequeno separado.
+
+    🔥 Destaque de "aberto" (2026-08-15, ver argus_painel_detalhes_ticket.md,
+    "Destacar visualmente na lista o ticket exibido no painel anexado") -
+    além do hover (temporário), a linha pode ficar PERSISTENTEMENTE marcada
+    (`definir_selecionado`) enquanto o ticket estiver aberto em qualquer
+    painel de detalhes (anexado ou destacado) - mesmo tratamento visual do
+    hover (fundo + borda dourada), só que não some ao tirar o mouse."""
 
     def __init__(self, ticket, resumo_elidido, fonte, ao_clicar, parent=None):
         super().__init__(parent)
         self._ticket = ticket
         self._ao_clicar = ao_clicar
         self._hover = False
+        self._selecionado = False
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(ALTURA_LINHA - 4)
@@ -367,9 +496,14 @@ class _LinhaTicket(QWidget):
 
         self._atualizar_estilo()
 
+    def definir_selecionado(self, selecionado: bool):
+        self._selecionado = selecionado
+        self._atualizar_estilo()
+
     def _atualizar_estilo(self):
-        cor_fundo = HIGHLIGHT_COLOR if self._hover else "transparent"
-        cor_borda = GAIA_GOLD if self._hover else "transparent"
+        destacar = self._hover or self._selecionado
+        cor_fundo = HIGHLIGHT_COLOR if destacar else "transparent"
+        cor_borda = GAIA_GOLD if destacar else "transparent"
         self.setStyleSheet(
             f"_LinhaTicket {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 8px; }}"
         )
@@ -409,22 +543,35 @@ class _TarefaSegundoPlano(QThread):
             self.concluido.emit(resultado)
 
 
-def _botao_estilizado(texto, cor=GAIA_GOLD) -> QPushButton:
-    """Botão mínimo próprio do Argus (2026-08-15) - o Argus não importa a
-    fábrica de widgets da GAIA (fica standalone/leve pros colegas, ver
-    docstring do módulo), então é um QPushButton simples com o mesmo
-    tratamento visual de sempre (SURFACE_COLOR/hover) em vez de reaproveitar
-    algo de fora do repositório."""
+def _botao_estilizado(texto, cor=GAIA_GOLD, preenchido=False) -> QPushButton:
+    """Botão no PADRÃO VISUAL DA GAIA (2026-08-16, pedido do usuário: "os
+    botões eu quero eles no padrão da GAIA. A GAIA vai ser o padrão de todos
+    os projetos") - mesmo molde de `criar_botao` (assistant/ui/qt_widgets.py):
+    `preenchido=True` pro botão de ação PRINCIPAL (fundo dourado sólido, ex.:
+    "Salvar", "Analisar", "Entendi"); `False` (padrão) pro estilo "outline"
+    dos botões secundários (ex.: "Cancelar", "Abrir", "Fechar"). O Argus
+    continua sem IMPORTAR a fábrica de widgets da GAIA (fica standalone/leve
+    pros colegas, ver docstring do módulo) - só copia o visual."""
     botao = QPushButton(texto)
     botao.setCursor(Qt.PointingHandCursor)
-    botao.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE))
-    botao.setStyleSheet(f"""
-        QPushButton {{
-            background-color: {SURFACE_COLOR}; color: {cor};
-            border: 1px solid {BORDA_SUTIL}; border-radius: 8px; padding: 6px 12px;
-        }}
-        QPushButton:hover {{ background-color: {HIGHLIGHT_COLOR}; border-color: {cor}; }}
-    """)
+    botao.setFixedHeight(32)
+    botao.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE, QFont.Bold))
+    if preenchido:
+        botao.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {GAIA_GOLD}; color: {BG_COLOR};
+                border: none; border-radius: 8px; padding: 0 16px;
+            }}
+            QPushButton:hover {{ background-color: {GAIA_GOLD_HOVER}; }}
+        """)
+    else:
+        botao.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {SURFACE_COLOR}; color: {cor};
+                border: 1px solid {BORDA_SUTIL}; border-radius: 8px; padding: 0 14px;
+            }}
+            QPushButton:hover {{ background-color: {HIGHLIGHT_COLOR}; }}
+        """)
     return botao
 
 
@@ -438,7 +585,7 @@ class _DialogoComentario(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Analisar ticket")
-        self.setStyleSheet(f"background-color: {SURFACE_COLOR};")
+        self.setStyleSheet(f"background-color: {BG_COLOR};")
         self.resize(360, 200)
         self.comentario = None
 
@@ -458,7 +605,7 @@ class _DialogoComentario(QDialog):
         botao_cancelar = _botao_estilizado("Cancelar", cor=TEXT_DIM)
         botao_cancelar.clicked.connect(self.reject)
         linha_botoes.addWidget(botao_cancelar)
-        botao_analisar = _botao_estilizado("Analisar")
+        botao_analisar = _botao_estilizado("Analisar", preenchido=True)
         botao_analisar.clicked.connect(self._confirmar)
         linha_botoes.addWidget(botao_analisar)
         lay.addLayout(linha_botoes)
@@ -477,7 +624,7 @@ class _DialogoRascunho(QDialog):
     def __init__(self, texto, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Rascunho de resposta")
-        self.setStyleSheet(f"background-color: {SURFACE_COLOR};")
+        self.setStyleSheet(f"background-color: {BG_COLOR};")
         self.resize(460, 360)
 
         lay = QVBoxLayout(self)
@@ -493,7 +640,7 @@ class _DialogoRascunho(QDialog):
         botao_fechar = _botao_estilizado("Fechar", cor=TEXT_DIM)
         botao_fechar.clicked.connect(self.reject)
         linha_botoes.addWidget(botao_fechar)
-        botao_copiar = _botao_estilizado("Copiar")
+        botao_copiar = _botao_estilizado("Copiar", preenchido=True)
         botao_copiar.clicked.connect(self._copiar)
         linha_botoes.addWidget(botao_copiar)
         lay.addLayout(linha_botoes)
@@ -502,50 +649,621 @@ class _DialogoRascunho(QDialog):
         QApplication.clipboard().setText(self._texto.toPlainText())
 
 
-class _PainelDetalhesTicket(QWidget):
-    """Janela flutuante própria (2026-08-15, pedido do usuário) com os campos
-    detalhados de UM ticket + os botões "Abrir ticket"/"Analisar" - SEPARADA
-    da janela principal (diferente da lista de tickets, que é embutida) pra
-    não espremer texto longo (Empresa/Plataforma/Tipo de solicitação) na
-    coluna estreita da barra."""
+class _DialogoAvisoLimite(QDialog):
+    """Aviso quando o limite de janelas destacadas é atingido (2026-08-15, ver
+    argus_painel_detalhes_ticket.md, "Limite de janelas independentes") -
+    dialog PRÓPRIO (não QMessageBox nativo, que destoaria visualmente do
+    resto do Argus sem borda/translúcido)."""
 
-    def __init__(self, ao_abrir_ticket, obter_detalhes_completos, analisar_ticket, parent=None):
+    def __init__(self, limite, parent=None):
         super().__init__(parent)
+        self.setWindowTitle("Limite de janelas atingido")
+        self.setStyleSheet(f"background-color: {BG_COLOR};")
+        self.resize(340, 150)
+
+        lay = QVBoxLayout(self)
+        mensagem = QLabel(
+            f"Já existem {limite} janela(s) de detalhes destacada(s) - o limite "
+            "configurado. Feche ou reanexe uma antes de destacar outra."
+        )
+        mensagem.setWordWrap(True)
+        mensagem.setStyleSheet(f"color: {TEXT_COLOR};")
+        lay.addWidget(mensagem, 1)
+
+        linha_botoes = QHBoxLayout()
+        linha_botoes.addStretch(1)
+        botao_ok = _botao_estilizado("Entendi", preenchido=True)
+        botao_ok.clicked.connect(self.accept)
+        linha_botoes.addWidget(botao_ok)
+        lay.addLayout(linha_botoes)
+
+
+def _titulo_secao(texto, cor=GAIA_GOLD, tamanho=13) -> QLabel:
+    """Título de seção/card no padrão da GAIA (`criar_titulo_secao`,
+    assistant/ui/qt_widgets.py) - copiado aqui (não importado, ver docstring
+    do módulo)."""
+    lbl = QLabel(texto)
+    lbl.setFont(QFont(FONTE_BASE, tamanho, QFont.Bold))
+    lbl.setStyleSheet(f"color: {cor}; background: transparent; border: none;")
+    return lbl
+
+
+def _descricao(texto) -> QLabel:
+    """Texto explicativo discreto no padrão da GAIA (`criar_descricao`)."""
+    lbl = QLabel(texto)
+    lbl.setWordWrap(True)
+    lbl.setFont(QFont(FONTE_BASE, 10))
+    lbl.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
+    return lbl
+
+
+class _CampoValorSpinbox(QLineEdit):
+    """Campo de número da `SpinboxCapsula` - mesmo padrão da GAIA
+    (`ui/qt_widgets.py`, pedido do usuário: "esses campos tem de permitir
+    clicar nele para escrever"). Seleciona o texto inteiro ao focar
+    (`QTimer.singleShot(0, ...)` - selecionar direto dentro do próprio
+    `focusInEvent` não pega, o clique que deu o foco ainda vai processar seu
+    próprio posicionamento de cursor por cima logo em seguida)."""
+
+    def focusInEvent(self, evento):
+        super().focusInEvent(evento)
+        QTimer.singleShot(0, self.selectAll)
+
+
+class SpinboxCapsula(QWidget):
+    """Campo numérico "Cápsula" no padrão da GAIA (2026-08-16, pedido do
+    usuário: "os botões eu quero eles no padrão da GAIA" - copiado de
+    `ui/qt_widgets.py`, não importado, ver docstring do módulo) - botões +/-
+    redondos dentro de uma cápsula arredondada, em vez das setinhas nativas
+    do `QSpinBox` (pequenas demais pra acertar o clique com facilidade).
+    Expõe a mesma interface básica de um `QSpinBox` (`value()`/`setValue()`/
+    `setRange()`/`valueChanged`)."""
+
+    valueChanged = Signal(int)
+
+    _TAMANHO_BOTAO = 20
+
+    def __init__(self, minimo, maximo, valor_atual, largura=None, passo=1, parent=None):
+        super().__init__(parent)
+        self._minimo = minimo
+        self._maximo = maximo
+        self._passo = passo
+        self._valor = max(minimo, min(maximo, valor_atual))
+
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("SpinboxCapsula")
+        self.setFixedHeight(self._TAMANHO_BOTAO + 6)
+        self.setFixedWidth(self._largura_minima_necessaria(largura))
+        self.setStyleSheet(f"""
+            QWidget#SpinboxCapsula {{
+                background-color: {HIGHLIGHT_COLOR};
+                border: 1px solid {BORDA_SUTIL};
+                border-radius: {(self._TAMANHO_BOTAO + 6) // 2}px;
+            }}
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(2)
+
+        self._botao_menos = self._criar_botao("−", self._decrementar)
+        self._campo_valor = _CampoValorSpinbox(str(self._valor))
+        self._campo_valor.setAlignment(Qt.AlignCenter)
+        self._campo_valor.setFrame(False)
+        self._campo_valor.setValidator(QIntValidator(self._minimo, self._maximo, self._campo_valor))
+        self._campo_valor.setStyleSheet(f"""
+            QLineEdit {{
+                color: {TEXT_COLOR}; font-family: Consolas; font-size: 12px;
+                border: none; background: transparent; padding: 0px;
+            }}
+        """)
+        self._campo_valor.editingFinished.connect(self._ao_editar_texto)
+        self._botao_mais = self._criar_botao("+", self._incrementar)
+
+        layout.addWidget(self._botao_menos)
+        layout.addWidget(self._campo_valor, stretch=1)
+        layout.addWidget(self._botao_mais)
+
+    def _largura_minima_necessaria(self, largura_pedida):
+        texto_maior = str(max(abs(self._minimo), abs(self._maximo)))
+        if self._minimo < 0:
+            texto_maior = "-" + texto_maior
+        largura_texto = QFontMetrics(QFont("Consolas", 12)).horizontalAdvance(texto_maior)
+        minima = self._TAMANHO_BOTAO * 2 + 6 + 4 + largura_texto + 14
+        return max(largura_pedida or 0, minima)
+
+    def _criar_botao(self, texto, ao_clicar):
+        botao = QPushButton(texto)
+        botao.setFixedSize(self._TAMANHO_BOTAO, self._TAMANHO_BOTAO)
+        botao.setCursor(Qt.PointingHandCursor)
+        botao.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent; color: {TEXT_DIM};
+                border: none; border-radius: {self._TAMANHO_BOTAO // 2}px;
+                font-size: 14px; font-weight: 600; padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {cor_com_alpha(GAIA_GOLD, 0.18)}; color: {GAIA_GOLD};
+            }}
+        """)
+        botao.clicked.connect(ao_clicar)
+        return botao
+
+    def _decrementar(self, checked=False):
+        self.setValue(self._valor - self._passo)
+
+    def _incrementar(self, checked=False):
+        self.setValue(self._valor + self._passo)
+
+    def _ao_editar_texto(self):
+        try:
+            novo_valor = int(self._campo_valor.text().strip())
+        except ValueError:
+            novo_valor = self._valor
+        self.setValue(novo_valor)
+
+    def value(self):
+        return self._valor
+
+    def setValue(self, novo_valor):
+        novo_valor = max(self._minimo, min(self._maximo, novo_valor))
+        mudou = novo_valor != self._valor
+        self._valor = novo_valor
+        self._campo_valor.setText(str(novo_valor))
+        if mudou:
+            self.valueChanged.emit(novo_valor)
+
+    def setRange(self, minimo, maximo):
+        self._minimo = minimo
+        self._maximo = maximo
+        self.setValue(self._valor)
+
+
+COR_BOLINHA_SWITCH_LIGADO = HIGHLIGHT_COLOR
+COR_BOLINHA_SWITCH_DESLIGADO = TEXT_COLOR
+
+
+class Switch(QCheckBox):
+    """Toggle animado (trilho + bolinha deslizando) no padrão da GAIA
+    (2026-08-16, pedido do usuário: "eu prefiro toggle do q checkbox" -
+    copiado de `ui/qt_widgets.py`, não importado, ver docstring do módulo) -
+    usado pra qualquer configuração liga/desliga (ex.: chacoalhada de
+    atenção), em vez de um `QCheckBox` nativo."""
+
+    def __init__(self, texto_on, texto_off, cor=GAIA_GOLD, marcado=False,
+                 cor_bolinha_ligado=COR_BOLINHA_SWITCH_LIGADO,
+                 cor_bolinha_desligado=COR_BOLINHA_SWITCH_DESLIGADO, parent=None):
+        super().__init__(parent)
+        self.texto_on = texto_on
+        self.texto_off = texto_off
+        self.cor = QColor(cor)
+        self.cor_bolinha_ligado = QColor(cor_bolinha_ligado)
+        self.cor_bolinha_desligado = QColor(cor_bolinha_desligado)
+        self._pos_bolinha = 1.0 if marcado else 0.0
+        self.setCursor(Qt.PointingHandCursor)
+        self.setChecked(marcado)
+        self.setText(texto_on if marcado else texto_off)
+        self.setFont(QFont(FONTE_BASE, 11))
+        self.stateChanged.connect(self._ao_mudar_estado)
+
+        self._anim = QPropertyAnimation(self, b"pos_bolinha")
+        self._anim.setDuration(160)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _obter_pos_bolinha(self):
+        return self._pos_bolinha
+
+    def _definir_pos_bolinha(self, valor):
+        self._pos_bolinha = valor
+        self.update()
+
+    pos_bolinha = Property(float, _obter_pos_bolinha, _definir_pos_bolinha)
+
+    def _ao_mudar_estado(self, estado):
+        marcado = bool(estado)
+        self.setText(self.texto_on if marcado else self.texto_off)
+        self._anim.stop()
+        self._anim.setStartValue(self._pos_bolinha)
+        self._anim.setEndValue(1.0 if marcado else 0.0)
+        self._anim.start()
+
+    def hitButton(self, pos):
+        return self.rect().contains(pos)
+
+    def sizeHint(self):
+        fm = self.fontMetrics()
+        largura_maior_texto = max(fm.horizontalAdvance(self.texto_on), fm.horizontalAdvance(self.texto_off))
+        return QSize(46 + 8 + largura_maior_texto, 26)
+
+    def paintEvent(self, evento):
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.Antialiasing)
+        largura_trilho, altura_trilho = 42, 21
+        y_trilho = (26 - altura_trilho) / 2
+        cor_trilho = self.cor if self.isChecked() else QColor(HIGHLIGHT_COLOR)
+        pintor.setBrush(cor_trilho)
+        pintor.setPen(Qt.NoPen)
+        pintor.drawRoundedRect(0, int(y_trilho), largura_trilho, altura_trilho, altura_trilho / 2, altura_trilho / 2)
+
+        raio_bolinha = altura_trilho / 2 - 2
+        x_bolinha = 2 + raio_bolinha + self._pos_bolinha * (largura_trilho - altura_trilho)
+        cor_bolinha = self.cor_bolinha_ligado if self.isChecked() else self.cor_bolinha_desligado
+        pintor.setBrush(cor_bolinha)
+        pintor.drawEllipse(QPoint(int(x_bolinha), int(y_trilho + altura_trilho / 2)), int(raio_bolinha), int(raio_bolinha))
+
+        x_texto = largura_trilho + 8
+        pintor.setPen(QColor(TEXT_COLOR))
+        pintor.setFont(self.font())
+        pintor.drawText(QRect(x_texto, 0, self.width() - x_texto, 26), Qt.AlignVCenter | Qt.AlignLeft, self.text())
+
+
+class _DialogoConfiguracoes(QDialog):
+    """Menu de configurações do Argus (2026-08-16, pedido do usuário depois
+    da reescrita do painel de detalhes - ver
+    argus_painel_detalhes_ticket.md) - reúne as opções que antes só davam pra
+    mudar editando `.env`/constante no código: limite de janelas destacadas
+    e chacoalhada de atenção (efeito opcional, "evitando uso frequente" -
+    ficava sem nenhum jeito de ligar sem mexer em código). Persistido via
+    `Persistencia.salvar_configuracoes` - aplica em tempo real, sem precisar
+    reiniciar o Argus (ver `ArgusWidget.abrir_configuracoes`).
+
+    🔥 Cards no padrão da GAIA (2026-08-16, pedido do usuário: "as
+    configuracoes tem varios botoes e campos fora do padrao... os botoes eu
+    quero eles no padrao da GAIA. A GAIA vai ser o padrao de todos os
+    projetos") - mesmo molde do modal `ModalArgus`
+    (assistant/ui/qt_modais/argus.py): `QFrame` com fundo `SURFACE_COLOR` +
+    cantos arredondados, título de seção, descrição discreta, e o controle
+    (`SpinboxCapsula`/`Switch`) - em vez de um `QFormLayout` cru com
+    `QSpinBox`/`QCheckBox` nativos."""
+
+    def __init__(self, limite_atual, chacoalhada_ativa, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configurações do Argus")
+        self.setStyleSheet(f"background-color: {BG_COLOR};")
+        self.resize(380, 260)
+        self.limite_janelas_destacadas = limite_atual
+        self.chacoalhada_ativa = chacoalhada_ativa
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(self._card_limite(limite_atual))
+        lay.addWidget(self._card_chacoalhada(chacoalhada_ativa))
+        lay.addStretch(1)
+
+        linha_botoes = QHBoxLayout()
+        linha_botoes.addStretch(1)
+        botao_cancelar = _botao_estilizado("Cancelar", cor=TEXT_DIM)
+        botao_cancelar.clicked.connect(self.reject)
+        linha_botoes.addWidget(botao_cancelar)
+        botao_salvar = _botao_estilizado("Salvar", preenchido=True)
+        botao_salvar.clicked.connect(self._confirmar)
+        linha_botoes.addWidget(botao_salvar)
+        lay.addLayout(linha_botoes)
+
+    def _card(self) -> tuple[QFrame, QVBoxLayout]:
+        frame = QFrame()
+        frame.setStyleSheet(f"background-color: {SURFACE_COLOR}; border-radius: 8px;")
+        lay_frame = QVBoxLayout(frame)
+        return frame, lay_frame
+
+    def _card_limite(self, limite_atual) -> QFrame:
+        frame, lay_frame = self._card()
+        lay_frame.addWidget(_titulo_secao("Limite de janelas destacadas"))
+        lay_frame.addWidget(_descricao(
+            "Quantas janelas de detalhes destacadas podem ficar abertas ao "
+            "mesmo tempo - ao atingir o limite, o Argus avisa antes de "
+            "deixar destacar outra."
+        ))
+        linha = QHBoxLayout()
+        self._campo_limite = SpinboxCapsula(1, 20, limite_atual, largura=90)
+        linha.addWidget(self._campo_limite)
+        linha.addStretch(1)
+        lay_frame.addLayout(linha)
+        return frame
+
+    def _card_chacoalhada(self, chacoalhada_ativa) -> QFrame:
+        frame, lay_frame = self._card()
+        lay_frame.addWidget(_titulo_secao("Chacoalhada de atenção"))
+        lay_frame.addWidget(_descricao(
+            "Quando você reabre um ticket já destacado, a janela sempre "
+            "recebe um pulso na borda/glow - a chacoalhada lateral é um "
+            "reforço visual extra, opcional."
+        ))
+        self._campo_chacoalhada = Switch("Ligada", "Desligada", marcado=chacoalhada_ativa)
+        lay_frame.addWidget(self._campo_chacoalhada)
+        return frame
+
+    def _confirmar(self):
+        self.limite_janelas_destacadas = self._campo_limite.value()
+        self.chacoalhada_ativa = self._campo_chacoalhada.isChecked()
+        self.accept()
+
+
+class _AlcaArraste(QWidget):
+    """Pequena barra de arraste CENTRALIZADA acima da linha de botões, em
+    QUALQUER painel de detalhes - anexado ou destacado (2026-08-16, pedido
+    do usuário depois de relatar que arrastar "não está funcionando": "eu só
+    quero poder arrastar o ticket... pode criar uma pequena barra
+    centralizada no topo que segurando ela e movendo mouse, move o ticket";
+    depois ajustado: "pode deixar a barra sempre presente, só que clicar
+    nela sem desfixar move tudo" - SEMPRE presente, não só quando destacado,
+    e arrasta a janela em qualquer estado sem precisar destacar primeiro).
+    Alvo pequeno mas VISÍVEL o tempo todo (antes era uma faixa esticada e
+    invisível ocupando o meio do cabeçalho), pra nunca deixar dúvida de onde
+    arrastar."""
+
+    LARGURA = 40
+    ALTURA = 6
+
+    def __init__(self, painel, parent=None):
+        super().__init__(parent)
+        self._painel = painel
+        self._pos_pressionada = None
+        self.setFixedSize(self.LARGURA, self.ALTURA)
+        self.setCursor(Qt.SizeAllCursor)
+        self.setToolTip("Arrastar")
+
+    def mousePressEvent(self, evento):
+        self._pos_pressionada = evento.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, evento):
+        if self._pos_pressionada is None:
+            return
+        atual = evento.globalPosition().toPoint()
+        delta = atual - self._pos_pressionada
+        if self._painel.destacado:
+            janela = self._painel.window()
+            janela.move(janela.pos() + delta)
+        else:
+            # 🔥 Anexado = "vinculado à barra de status" (2026-08-16, pedido
+            # do usuário: "tem q mover TUDO, a barra dos status tbm") - move
+            # a janela PRINCIPAL em vez deste painel; o painel já segue ela
+            # sozinho (`ArgusWidget.moveEvent`), então os dois andam juntos.
+            self._painel.mover_vinculado(delta)
+        self._pos_pressionada = atual
+
+    def mouseReleaseEvent(self, evento):
+        self._pos_pressionada = None
+
+    def paintEvent(self, evento):
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.Antialiasing)
+        pintor.setPen(Qt.NoPen)
+        pintor.setBrush(QColor(TEXT_DIM))
+        pintor.drawRoundedRect(self.rect(), self.ALTURA / 2, self.ALTURA / 2)
+
+
+TAMANHO_BOTAO_ICONE = 28
+
+
+class _BotaoIcone(QPushButton):
+    """Botão de ícone (emoji) no PADRÃO VISUAL DA GAIA (2026-08-16, pedido do
+    usuário: "os botões eu quero eles no padrão da GAIA. A GAIA vai ser o
+    padrão de todos os projetos") - mesmo molde de `criar_botao_pequeno`
+    (assistant/ui/qt_widgets.py, copiado aqui, não importado - ver docstring
+    do módulo): fundo/borda SEMPRE visíveis (nunca só no hover), hover mais
+    forte. `QPushButton` NATIVO em vez do QLabel usado antes - o Qt já
+    garante clique correto em QUALQUER ponto do botão de graça, sem precisar
+    calcular hit-area na mão (resolve de vez o relatado "parece que tem que
+    clicar na posição exata do texto/ícone").
+
+    `riscado` (opcional) desenha uma linha diagonal por cima do ícone - usado
+    pelo alfinete de Destacar/Reanexar ("alfinete riscado e normal") em vez
+    de um segundo emoji (nenhum emoji de "despinar" rende de forma confiável
+    em toda fonte/SO - desenhar a linha na mão garante o mesmo resultado
+    sempre)."""
+
+    def __init__(self, texto, tooltip, ao_clicar, cor=TEXT_DIM, tamanho_fonte=13, riscado=False, parent=None):
+        super().__init__(texto, parent)
+        self._cor = cor
+        self._riscado = riscado
+        self.setFixedSize(TAMANHO_BOTAO_ICONE, TAMANHO_BOTAO_ICONE)
+        self.setFont(QFont(FONTE_BASE, tamanho_fonte))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(tooltip)
+        self.clicked.connect(ao_clicar)
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {HIGHLIGHT_COLOR}; color: {self._cor};
+                border: 1px solid {BORDA_SUTIL}; border-radius: 6px;
+            }}
+            QPushButton:hover {{ background-color: {BORDA_SUTIL}; }}
+        """)
+
+    def definir_riscado(self, riscado: bool, tooltip: str = None):
+        self._riscado = riscado
+        if tooltip is not None:
+            self.setToolTip(tooltip)
+        self.update()
+
+    def paintEvent(self, evento):
+        super().paintEvent(evento)
+        if self._riscado:
+            # 🔥 Diagonal INVERTIDA (2026-08-16, pedido do usuário: "inverte
+            # o bloqueio no alfinete, ta se sobrepondo e mal da p ver" - a
+            # diagonal "/" (de baixo-esquerda a cima-direita) cruzava bem em
+            # cima do corpo do alfinete, ficando confuso/pouco legível.
+            # "\" (de cima-esquerda a baixo-direita) cruza menos o glifo.
+            pintor = QPainter(self)
+            pintor.setRenderHint(QPainter.Antialiasing)
+            pintor.setPen(QPen(QColor("#e05d5d"), 2))
+            margem = 6
+            pintor.drawLine(margem, margem, self.width() - margem, self.height() - margem)
+
+
+class _RotuloClicavel(QLabel):
+    """QLabel clicável com hit-area PRÓPRIA e SEMPRE visível (2026-08-16,
+    mesmo pedido do usuário que motivou `_BotaoIcone` acima) - usado no
+    código do ticket (clique pra copiar), que precisa de texto rico (cor por
+    prioridade) em vez de um emoji fixo, então não reaproveita `_BotaoIcone`
+    direto. Override de CLASSE do `mousePressEvent` (nunca
+    `label.mousePressEvent = lambda...` por instância) + padding reservado
+    via QSS, pra nunca depender de acertar o texto no pixel exato."""
+
+    def __init__(self, texto, tooltip, ao_clicar, parent=None):
+        super().__init__(texto, parent)
+        self._ao_clicar = ao_clicar
+        self._hover = False
+        self.setTextFormat(Qt.RichText)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(tooltip)
+        self._atualizar_estilo()
+
+    def _atualizar_estilo(self):
+        cor_fundo = HIGHLIGHT_COLOR if self._hover else "transparent"
+        self.setStyleSheet(
+            f"background-color: {cor_fundo}; border: none; border-radius: 6px; padding: 3px 4px;"
+        )
+
+    def enterEvent(self, evento):
+        self._hover = True
+        self._atualizar_estilo()
+        super().enterEvent(evento)
+
+    def leaveEvent(self, evento):
+        self._hover = False
+        self._atualizar_estilo()
+        super().leaveEvent(evento)
+
+    def mousePressEvent(self, evento):
+        self._ao_clicar()
+
+
+class _PainelDetalhesTicket(QWidget):
+    """Painel de detalhes de UM ticket (2026-08-15, ver
+    argus_painel_detalhes_ticket.md). Por padrão fica ANEXADO - segue a
+    janela principal. Pode ser DESTACADO via ação "Destacar", virando janela
+    independente (arrastável/redimensionável) presa a ESTE ticket até ser
+    reanexada ou fechada.
+
+    🔥 Simplificado (2026-08-16, pedido do usuário depois de bugs reais em
+    uso: "ainda esta tendo problema de tickets se sobrepondo, e n trocando
+    qnd seleciono outro... é p ser simples, clicou no ticket apareceu ele do
+    lado, clicou em outro ticket, some o anterior e abre o novo") - a versão
+    anterior reaproveitava UMA instância com crossfade animado entre
+    tickets; isso se mostrou frágil em uso real (só validado por chamada
+    síncrona em teste automatizado, nunca pela animação de verdade rodando
+    no loop de eventos real). Removido o crossfade/reaproveitamento: cada
+    ticket clicado no painel anexado FECHA a instância atual (se houver) e
+    ABRE uma instância nova do zero (`ArgusWidget._ticket_clicado`) - sem
+    animação de entrada nem de troca, mostra na posição final direto.
+
+    Terminologia: "anexado" = painel conectado à janela principal;
+    "destacar"/"destacado" = virar janela independente; "reanexar" = devolver
+    ao painel principal. Todas as instâncias são top-level SEM parent Qt
+    (mesmo enquanto anexadas) - o ArgusWidget controla o ciclo de vida
+    explicitamente (ver `ArgusWidget.closeEvent`), em vez de depender do Qt
+    destruir filhos junto com o pai (isso quebraria a regra de que janelas
+    destacadas sobrevivem ao fechamento da janela principal)."""
+
+    def __init__(
+        self, ao_abrir_ticket, obter_detalhes_completos, analisar_ticket,
+        ao_atualizar, ao_alternar_destaque, ao_fechar, obter_chacoalhada_ativa=None,
+        ao_mover_vinculado=None,
+    ):
+        super().__init__(None)
         self._ao_abrir_ticket = ao_abrir_ticket
         self._obter_detalhes_completos = obter_detalhes_completos
         self._analisar_ticket = analisar_ticket
+        self._ao_atualizar = ao_atualizar
+        self._ao_alternar_destaque = ao_alternar_destaque
+        self._ao_fechar = ao_fechar
+        # 🔥 Arraste VINCULADO (2026-08-16, pedido do usuário: "a barra de
+        # arraste, qnd estiver vinculada a barra dos status, tem q mover
+        # TUDO, a barra dos status tbm") - enquanto ANEXADO, arrastar move a
+        # janela PRINCIPAL (não este painel) - o painel já segue ela sozinho
+        # (`ArgusWidget.moveEvent`), então mover a principal move os dois
+        # juntos, como um bloco só. Só usado em modo anexado (ver
+        # `_AlcaArraste.mouseMoveEvent`) - destacado continua movendo só a si
+        # mesmo, por ser independente.
+        self._ao_mover_vinculado = ao_mover_vinculado
+        # 🔥 Configurável em tempo real via menu de Configurações (2026-08-16,
+        # ver `_DialogoConfiguracoes`/`ArgusWidget.abrir_configuracoes`) - um
+        # CALLABLE (não um bool capturado na criação) pra ligar/desligar
+        # refletir imediatamente em painéis já abertos, sem precisar recriá-
+        # los. Sem injeção (ex.: uso fora do ArgusWidget), cai pro padrão
+        # desligado do módulo.
+        self._obter_chacoalhada_ativa = obter_chacoalhada_ativa or (lambda: ATIVAR_CHACOALHADA_ATENCAO)
+
         self._ticket = None
         self._tarefa = None
+        self.destacado = False
+        self._lado = "direita"
+        self._fase_pulso = 1.0
+        self._timer_pulso = None
 
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._estado_janela = _configurar_janela_flutuante(self)
         self.setFixedWidth(LARGURA_PAINEL_DETALHES)
 
-        self._layout = QVBoxLayout(self)
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(0)
+
+        self._conteudo_raiz = QWidget(self)
+        self._conteudo_raiz.setStyleSheet("background: transparent;")
+        layout_raiz.addWidget(self._conteudo_raiz)
+        self._layout = QVBoxLayout(self._conteudo_raiz)
         self._layout.setContentsMargins(16, 14, 16, 14)
         self._layout.setSpacing(6)
+
         self.setVisible(False)
 
-    def mostrar(self, ticket, x, y):
+    # --- consulta de estado ---------------------------------------------
+
+    def ticket_atual_chave(self):
+        return self._ticket.chave if self._ticket else None
+
+    # --- abertura/troca (modo anexado) ------------------------------------
+
+    def preparar_conteudo(self, ticket):
+        """Reconstrói os campos exibidos pra este ticket - chamado antes da
+        primeira exibição e no meio do crossfade (com o conteúdo já
+        invisível), nunca recria a JANELA em si."""
         self._ticket = ticket
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        # 🔥 Limpeza RECURSIVA (2026-08-16, causa raiz real do bug relatado:
+        # "quando clico no desfixar ele zoa os botões, como acontecia com o
+        # redimensionar antes de removermos") - ver `_limpar_layout`: este
+        # `self._layout` tem SUB-layouts aninhados (linha_arraste/linha_topo/
+        # linha_botoes), e uma limpeza só de nível 1 nunca escondia os
+        # widgets DENTRO deles, que ficavam órfãos e visíveis por cima do
+        # conteúdo novo (título/botões duplicados na tela).
+        _limpar_layout(self._layout)
+
+        # 🔥 Barra de arraste SEMPRE presente (2026-08-16, pedido do usuário:
+        # "pode deixar a barra sempre presente, só que clicar nela sem
+        # desfixar move tudo") - antes só existia em modo destacado; agora
+        # arrasta a janela (anexada ou destacada) em qualquer estado, sem
+        # precisar destacar primeiro.
+        linha_arraste = QHBoxLayout()
+        linha_arraste.addStretch(1)
+        linha_arraste.addWidget(_AlcaArraste(self))
+        linha_arraste.addStretch(1)
+        self._layout.addLayout(linha_arraste)
 
         linha_topo = QHBoxLayout()
         cor_prioridade = CORES_PRIORIDADE.get(ticket.prioridade, TEXT_COLOR)
-        titulo = QLabel(f'<span style="color:{cor_prioridade};">{ticket.chave}</span>')
-        titulo.setTextFormat(Qt.RichText)
+        titulo = _RotuloClicavel(
+            f'<span style="color:{cor_prioridade};">{ticket.chave}</span>',
+            "Clique para copiar o código do ticket", self._copiar_codigo,
+        )
         titulo.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_NOME, QFont.Bold))
-        titulo.setStyleSheet("background: transparent; border: none;")
         linha_topo.addWidget(titulo)
+        # 🔥 Ícones no cabeçalho (2026-08-16, ajuste de posição pedido pelo
+        # usuário) - 🔗 Copiar link cola no ticket, à ESQUERDA (ao lado do
+        # código); o alfinete (Destacar/Reanexar) fica ao lado do ⟳
+        # Atualizar, à direita, junto do ✕ - substituem os antigos botões de
+        # texto "Copiar link"/"Atualizar"/"Destacar"/"Reanexar" da linha de
+        # ações debaixo.
+        botao_copiar_link = _BotaoIcone("🔗", "Copiar link", self._copiar_link)
+        linha_topo.addWidget(botao_copiar_link)
         linha_topo.addStretch(1)
-        botao_fechar = QLabel("✕")
-        botao_fechar.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
-        botao_fechar.setCursor(Qt.PointingHandCursor)
-        botao_fechar.mousePressEvent = lambda evento: self.esconder()
+        tooltip_alfinete = "Reanexar" if self.destacado else "Destacar"
+        self._botao_alfinete = _BotaoIcone(
+            "📌", tooltip_alfinete, lambda: self._ao_alternar_destaque(self), riscado=self.destacado,
+        )
+        linha_topo.addWidget(self._botao_alfinete)
+        botao_atualizar = _BotaoIcone("⟳", "Atualizar", lambda: self._ao_atualizar(), tamanho_fonte=16)
+        linha_topo.addWidget(botao_atualizar)
+        botao_fechar = _BotaoIcone("✕", "Fechar", lambda: self._ao_fechar(self))
         linha_topo.addWidget(botao_fechar)
         self._layout.addLayout(linha_topo)
 
@@ -555,6 +1273,11 @@ class _PainelDetalhesTicket(QWidget):
         resumo.setStyleSheet(f"color: {TEXT_COLOR}; background: transparent; border: none;")
         self._layout.addWidget(resumo)
 
+        conteudo_campos = QWidget()
+        conteudo_campos.setStyleSheet("background: transparent;")
+        layout_campos = QVBoxLayout(conteudo_campos)
+        layout_campos.setContentsMargins(0, 0, 0, 0)
+        layout_campos.setSpacing(6)
         cor_sla = "#f38ba8" if ticket.sla_estourado else TEXT_COLOR
         campos = [
             ("Time to resolution", ticket.sla_texto, cor_sla),
@@ -568,29 +1291,28 @@ class _PainelDetalhesTicket(QWidget):
         for rotulo, valor, cor_valor in campos:
             if not valor:
                 continue
-            self._layout.addWidget(self._linha_campo(rotulo, valor, cor_valor))
+            layout_campos.addWidget(self._linha_campo(rotulo, valor, cor_valor))
 
-        linha_botoes = QHBoxLayout()
-        botao_abrir = _botao_estilizado("Abrir ticket")
-        botao_abrir.clicked.connect(lambda: self._ao_abrir_ticket(self._ticket))
-        linha_botoes.addWidget(botao_abrir)
-        # 🔥 "Analisar" precisa das DUAS peças (2026-08-15) - buscar
-        # descrição+comentários completos (`obter_detalhes_completos`, do
-        # provider) E o gancho de LLM (`analisar_ticket`, injetado por quem
-        # sobe o widget) - sem qualquer uma delas, não tem como gerar nada.
-        if self._obter_detalhes_completos is not None and self._analisar_ticket is not None:
-            self._botao_analisar = _botao_estilizado("Analisar")
-            self._botao_analisar.clicked.connect(self._iniciar_analise)
-            linha_botoes.addWidget(self._botao_analisar)
-        self._layout.addLayout(linha_botoes)
+        # 🔥 Rolagem interna só quando o conteúdo passa do limite da área
+        # útil do monitor (2026-08-15, ver argus_painel_detalhes_ticket.md,
+        # "Tamanho e conteúdo") - mesmo padrão já usado pra lista de tickets
+        # (`ArgusWidget._preencher_painel`): só existe QScrollArea quando
+        # REALMENTE precisa, senão a altura natural encolhe/cresce sem o bug
+        # de "não encolhe mais" que um QScrollArea sempre presente causaria.
+        altura_max_conteudo = self._altura_maxima_disponivel() - RESERVA_CABECALHO_ACOES_PAINEL_DETALHES
+        if conteudo_campos.sizeHint().height() > altura_max_conteudo:
+            area = QScrollArea()
+            area.setWidgetResizable(True)
+            area.setFrameShape(QScrollArea.NoFrame)
+            area.setStyleSheet("background: transparent; border: none;")
+            area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            area.setFixedHeight(max(int(altura_max_conteudo), ALTURA_MINIMA_PAINEL_DETALHES // 2))
+            area.setWidget(conteudo_campos)
+            self._layout.addWidget(area)
+        else:
+            self._layout.addWidget(conteudo_campos)
 
-        self.adjustSize()
-        self.move(x, y)
-        self.setVisible(True)
-        self.raise_()
-
-    def esconder(self):
-        self.setVisible(False)
+        self._layout.addLayout(self._montar_linha_acoes())
 
     def _linha_campo(self, rotulo, valor, cor_valor) -> QWidget:
         linha = QHBoxLayout()
@@ -607,6 +1329,140 @@ class _PainelDetalhesTicket(QWidget):
         lbl_valor.setStyleSheet(f"color: {cor_valor}; background: transparent; border: none;")
         linha.addWidget(lbl_valor, 1)
         return w
+
+    def _montar_linha_acoes(self) -> QHBoxLayout:
+        # 🔥 Botões enxutos (2026-08-16, pedido do usuário) - "Abrir no Jira"
+        # virou só "Abrir"; Copiar link/Atualizar/Destacar/Reanexar saíram
+        # daqui, viraram ícones no cabeçalho (ver `preparar_conteudo`).
+        linha_botoes = QHBoxLayout()
+        botao_abrir = _botao_estilizado("Abrir")
+        botao_abrir.clicked.connect(lambda: self._ao_abrir_ticket(self._ticket))
+        linha_botoes.addWidget(botao_abrir)
+
+        # 🔥 "Analisar" precisa das DUAS peças (2026-08-15) - buscar
+        # descrição+comentários completos (`obter_detalhes_completos`, do
+        # provider) E o gancho de LLM (`analisar_ticket`, injetado por quem
+        # sobe o widget) - sem qualquer uma delas, não tem como gerar nada.
+        if self._obter_detalhes_completos is not None and self._analisar_ticket is not None:
+            self._botao_analisar = _botao_estilizado("Analisar")
+            self._botao_analisar.clicked.connect(self._iniciar_analise)
+            linha_botoes.addWidget(self._botao_analisar)
+
+        linha_botoes.addStretch(1)
+        return linha_botoes
+
+    def _altura_maxima_disponivel(self) -> float:
+        tela = self.screen() or QGuiApplication.primaryScreen()
+        area = tela.availableGeometry()
+        return max(200, area.height() - 2 * MARGEM_VERTICAL_TELA_PAINEL_DETALHES)
+
+    def mostrar(self, x, y, largura, altura, lado):
+        """Mostra o painel na posição final - conteúdo já deve ter sido
+        preparado (`preparar_conteudo`) por quem chama. Sem animação de
+        entrada (2026-08-16, simplificação pedida pelo usuário - ver
+        docstring da classe): aparece direto, sem gerar oportunidade pra
+        janela antiga e a nova coexistirem visualmente por qualquer tempo."""
+        self._lado = lado
+        self.setGeometry(x, y, largura, altura)
+        self.setVisible(True)
+        self.raise_()
+
+    def atualizar_se_mostrando(self, ticket):
+        """Chamado a cada polling (`ArgusWidget.atualizar`) - se este painel
+        estiver mostrando o MESMO ticket, atualiza os campos (prioridade/
+        status/SLA/comentário) sem recriar a janela, só o conteúdo interno
+        (2026-08-15, ver argus_painel_detalhes_ticket.md, "Tamanho e
+        conteúdo")."""
+        if not self._ticket or self._ticket.chave != ticket.chave or not self.isVisible():
+            return
+        self.preparar_conteudo(ticket)
+        if not self.destacado:
+            self.resize(self.width(), min(self.sizeHint().height(), int(self._altura_maxima_disponivel())))
+
+    def reposicionar(self, x, y, lado):
+        """Segue a janela principal quando ela se move (ver
+        `ArgusWidget.moveEvent`) - só em modo anexado; recalcula o lado se o
+        Argus mudou de monitor."""
+        self._lado = lado
+        self.move(x, y)
+        self.update()
+
+    def mover_vinculado(self, delta):
+        """Arraste da barra em modo ANEXADO (ver `_AlcaArraste`) - move a
+        janela PRINCIPAL em vez desta (que já segue ela sozinha), pra
+        arrastar os dois juntos como um bloco só."""
+        if self._ao_mover_vinculado:
+            self._ao_mover_vinculado(delta)
+
+    def esconder(self):
+        self.setVisible(False)
+        self._ticket = None
+
+    # --- destacar/reanexar ---------------------------------------------------
+
+    def tornar_destacado(self, x, y, largura, altura):
+        """Vira janela independente ARRASTÁVEL (2026-08-16, pedido do
+        usuário: "eu só quero poder arrastar o ticket") - sem redimensionar
+        (o botão de redimensionar foi removido: "usar ele esta duplicando
+        botoes"), então o tamanho fica fixo no valor calculado na hora de
+        destacar."""
+        self.destacado = True
+        self.setGeometry(x, y, largura, altura)
+        self.preparar_conteudo(self._ticket)
+
+    def fechar_definitivo(self):
+        if self._timer_pulso:
+            self._timer_pulso.stop()
+        self.setVisible(False)
+        self.deleteLater()
+
+    # --- atenção (janela destacada já aberta) --------------------------------
+
+    def trazer_para_frente_com_atencao(self):
+        self.raise_()
+        self.activateWindow()
+        self._disparar_pulso_atencao()
+        if self._obter_chacoalhada_ativa():
+            self._chacoalhar()
+
+    def _disparar_pulso_atencao(self):
+        self._fase_pulso = 0.0
+        if self._timer_pulso is None:
+            self._timer_pulso = QTimer(self)
+            self._timer_pulso.timeout.connect(self._avancar_pulso)
+        self._timer_pulso.start(INTERVALO_TIMER_PULSO_ATENCAO_MS)
+
+    def _avancar_pulso(self):
+        self._fase_pulso += INTERVALO_TIMER_PULSO_ATENCAO_MS / DURACAO_PULSO_ATENCAO_MS
+        if self._fase_pulso >= 1.0:
+            self._fase_pulso = 1.0
+            self._timer_pulso.stop()
+        self.update()
+
+    def _chacoalhar(self):
+        """Efeito opcional (desligado por padrão, liga/desliga no menu de
+        Configurações - ver `_DialogoConfiguracoes`) - pequeno deslocamento
+        lateral de ida e volta, "evitando uso frequente" (pedido do usuário)."""
+        pos_original = self.pos()
+        sequencia = [8, -8, 5, -5, 0]
+
+        def _passo(indice=0):
+            if indice >= len(sequencia):
+                return
+            self.move(pos_original.x() + sequencia[indice], pos_original.y())
+            QTimer.singleShot(35, lambda: _passo(indice + 1))
+
+        _passo()
+
+    # --- ações rápidas ---------------------------------------------------
+
+    def _copiar_codigo(self):
+        if self._ticket:
+            QApplication.clipboard().setText(self._ticket.chave)
+
+    def _copiar_link(self):
+        if self._ticket:
+            QApplication.clipboard().setText(self._ticket.url)
 
     def _iniciar_analise(self):
         dialogo = _DialogoComentario(self)
@@ -636,45 +1492,80 @@ class _PainelDetalhesTicket(QWidget):
         self._botao_analisar.setText("Analisar")
         _DialogoRascunho(f"Não consegui analisar: {mensagem}", self).exec()
 
+    # --- janela (pintura/máscara) --------------------------------------------
+
+    def paintEvent(self, evento):
+        pintor = QPainter(self)
+        pintor.setRenderHint(QPainter.Antialiasing)
+        _pintar_fundo_janela(self, pintor, self._estado_janela)
+
+        if not self.destacado:
+            self._pintar_conector(pintor)
+
+        if self._fase_pulso < 1.0:
+            alpha = int(200 * (1.0 - self._fase_pulso))
+            cor = QColor(GAIA_GOLD)
+            cor.setAlpha(alpha)
+            caminho = QPainterPath()
+            caminho.addRoundedRect(self.rect().adjusted(1, 1, -2, -2), RAIO_CANTO, RAIO_CANTO)
+            pintor.setPen(QPen(cor, 3))
+            pintor.drawPath(caminho)
+
+    def _pintar_conector(self, pintor):
+        """Continuidade visual com a janela principal (2026-08-15, ver
+        argus_painel_detalhes_ticket.md, "Manter continuidade visual... por
+        meio do alinhamento, glow ou pequeno indicador de conexão") - uma
+        faixa dourada sutil na borda do painel voltada pra janela principal,
+        só enquanto ANEXADO."""
+        cor = QColor(GAIA_GOLD)
+        cor.setAlpha(ALPHA_GLOW_ABERTA + 40)
+        largura_faixa = 3
+        if self._lado == "direita":
+            pintor.fillRect(0, 0, largura_faixa, self.height(), cor)
+        else:
+            pintor.fillRect(self.width() - largura_faixa, 0, largura_faixa, self.height(), cor)
+
+    def resizeEvent(self, evento):
+        super().resizeEvent(evento)
+        if not self._estado_janela["cantos_ok"]:
+            _aplicar_mascara_arredondada(self)
+
 
 class ArgusWidget(QWidget):
-    def __init__(self, provider, persistencia, analisar_ticket=None):
+    def __init__(
+        self, provider, persistencia, analisar_ticket=None,
+        limite_janelas_destacadas=LIMITE_JANELAS_DESTACADAS_PADRAO,
+    ):
         super().__init__()
         self._provider = provider
         self._persistencia = persistencia
+        self._analisar_ticket_gancho = analisar_ticket
         self._modo_total = False
         self._categorias = []
         self._chips = []
         self._chave_categoria_aberta = None
         self._fixado = False
-        # 🔥 Painel de detalhes (2026-08-15, pedido do usuário) - gancho
-        # OPCIONAL de análise (mesmo espírito do `descrever_imagem` do
-        # JiraProvider) - o Argus em si não tem LLM nenhuma; quem quiser o
-        # botão "Analisar" (ex.: a GAIA, com o Groq dela já configurado)
-        # injeta essa função. `getattr` (não `NotificacaoProvider` exigir isso
-        # de TODO provider) porque nem todo provider (ex.: `ProviderFalso` dos
-        # testes) precisa saber buscar detalhe completo - sem ela, o painel
-        # mostra só "Abrir ticket".
-        self._painel_detalhes = _PainelDetalhesTicket(
-            self._abrir_ticket, getattr(self._provider, "obter_detalhes_completos", None), analisar_ticket, self,
-        )
 
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        # 🔥 Cantos arredondados nativos do Windows em vez de setMask() manual
-        # (2026-08-15, achado pesquisando amnweb/yasb) - winId() força a
-        # criação do handle nativo, só depois disso a chamada DWM funciona.
-        # Sem suporte (Windows <11, não-Windows, qualquer erro), cai pro
-        # mascaramento manual de sempre (ver _atualizar_mascara).
-        self.winId()
-        self._cantos_nativos_ok = aplicar_cantos_redondos(self)
-        remover_cor_borda(self)
-        self._mica_ok = ATIVAR_MICA and aplicar_mica(self)
-        self._acrylic_ok = (
-            not self._mica_ok
-            and ATIVAR_ACRYLIC
-            and aplicar_acrylic(self, SURFACE_COLOR, ALPHA_ACRYLIC)
-        )
+        # 🔥 Painel de detalhes anexado/destacado (2026-08-15, ver
+        # argus_painel_detalhes_ticket.md) - `_painel_anexado` é a instância
+        # ÚNICA reaproveitada (crossfade) enquanto anexada; ao destacar, ela
+        # PRÓPRIA vira a janela independente (registrada em
+        # `_janelas_destacadas`) e uma instância nova/vazia assume o slot
+        # anexado - nunca duas instâncias pro mesmo ticket (ver
+        # `_ticket_clicado`).
+        self._janelas_destacadas = {}
+        # 🔥 Menu de Configurações (2026-08-16, ver `_DialogoConfiguracoes`) -
+        # config PERSISTIDA tem prioridade sobre o argumento do construtor
+        # (esse já vem do `.env` no uso standalone, ver app.py) - se o
+        # usuário já mudou algo pelo menu antes, isso prevalece entre
+        # reinícios.
+        config_salva = persistencia.obter_configuracoes()
+        self._limite_janelas_destacadas = config_salva.get("limite_janelas_destacadas", limite_janelas_destacadas)
+        self._chacoalhada_ativa = config_salva.get("chacoalhada_ativa", ATIVAR_CHACOALHADA_ATENCAO)
+        self._painel_anexado = self._criar_painel_detalhes()
+
+        estado_janela = _configurar_janela_flutuante(self)
+        self._estado_janela = estado_janela
 
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
@@ -723,6 +1614,19 @@ class ArgusWidget(QWidget):
         self._categorias = self._provider.listar_categorias()
         self._reconstruir_barra()
         QTimer.singleShot(0, self._atualizar_painel_se_aberto)
+        self._atualizar_paineis_de_detalhes_abertos()
+
+    def _atualizar_paineis_de_detalhes_abertos(self):
+        """Se prioridade/status/SLA/comentários mudarem num ticket que já
+        está com o painel aberto (anexado ou destacado), atualiza os dados
+        SEM recriar nada (ver `_PainelDetalhesTicket.atualizar_se_mostrando`)."""
+        por_chave = {t.chave: t for c in self._categorias for t in c.tickets}
+        chave_anexado = self._painel_anexado.ticket_atual_chave()
+        if chave_anexado and chave_anexado in por_chave:
+            self._painel_anexado.atualizar_se_mostrando(por_chave[chave_anexado])
+        for chave, painel in self._janelas_destacadas.items():
+            if chave in por_chave:
+                painel.atualizar_se_mostrando(por_chave[chave])
 
     def _atualizar_painel_se_aberto(self):
         if not self._chave_categoria_aberta:
@@ -746,6 +1650,10 @@ class ArgusWidget(QWidget):
     def _reconstruir_barra(self):
         for chip in self._chips:
             self._layout_barra.removeWidget(chip)
+            # 🔥 `hide()` antes do `deleteLater()` (2026-08-16, mesma correção
+            # de `_preencher_painel` abaixo) - `removeWidget` não esconde o
+            # widget, só para de gerenciar a geometria dele.
+            chip.hide()
             chip.deleteLater()
         self._chips = []
 
@@ -830,8 +1738,8 @@ class ArgusWidget(QWidget):
 
     def _aplicar_tamanho_real(self):
         self.resize(self.sizeHint())
-        if not self._cantos_nativos_ok:
-            self._atualizar_mascara()
+        if not self._estado_janela["cantos_ok"]:
+            _aplicar_mascara_arredondada(self)
 
     # --- conteúdo do painel --------------------------------------------------
 
@@ -851,6 +1759,14 @@ class ArgusWidget(QWidget):
             item = self._layout_painel.takeAt(0)
             widget = item.widget()
             if widget:
+                # 🔥 Correção (2026-08-16, bug relatado: "os tickets estao se
+                # sobrepondo ao selecionar varios") - `deleteLater()` sozinho
+                # só destrói o widget numa volta futura do loop de eventos;
+                # até lá ele continua VISÍVEL na última posição (`takeAt` só
+                # para de gerenciar a geometria, não esconde) - sobreposto às
+                # linhas novas que acabaram de ocupar o mesmo espaço.
+                # `hide()` remove da tela na hora, síncrono.
+                widget.hide()
                 widget.deleteLater()
 
         largura = max(self._barra.sizeHint().width(), 320)
@@ -933,17 +1849,192 @@ class ArgusWidget(QWidget):
         metricas = QFontMetrics(fonte)
         largura_resumo = max(0, largura_disponivel - 30 - metricas.horizontalAdvance(prefixo_plano))
         resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}", Qt.ElideRight, largura_resumo)
-        return _LinhaTicket(ticket, resumo_elidido, fonte, self._ticket_clicado)
+        linha = _LinhaTicket(ticket, resumo_elidido, fonte, self._ticket_clicado)
+        linha.definir_selecionado(self._ticket_esta_aberto(ticket.chave))
+        return linha
+
+    def _ticket_esta_aberto(self, chave) -> bool:
+        return self._painel_anexado.ticket_atual_chave() == chave or chave in self._janelas_destacadas
+
+    # --- painel de detalhes: anexado/destacado/instâncias --------------------
+
+    def _criar_painel_detalhes(self) -> _PainelDetalhesTicket:
+        return _PainelDetalhesTicket(
+            self._abrir_ticket,
+            getattr(self._provider, "obter_detalhes_completos", None),
+            self._analisar_ticket_gancho,
+            self.atualizar,
+            self._alternar_destaque,
+            self._fechar_painel_detalhes,
+            obter_chacoalhada_ativa=lambda: self._chacoalhada_ativa,
+            ao_mover_vinculado=self._mover_vinculado_ao_painel,
+        )
+
+    def _mover_vinculado_ao_painel(self, delta):
+        """Arraste da barra do painel ANEXADO (2026-08-16, pedido do
+        usuário: "a barra de arraste, qnd estiver vinculada a barra dos
+        status, tem q mover TUDO, a barra dos status tbm") - move a janela
+        PRINCIPAL; o painel anexado já segue ela sozinho (`moveEvent`
+        abaixo), então os dois se movem juntos como um bloco só."""
+        self.move(self.pos() + delta)
+
+    # --- menu de configurações -----------------------------------------------
+
+    def abrir_configuracoes(self):
+        """Ponto de entrada público (2026-08-16, ver
+        argus_painel_detalhes_ticket.md) - chamado pelo menu da bandeja no
+        uso standalone (ver app.py); rodando embutido na GAIA, quem
+        instanciar o `ArgusWidget` pode ligar isso na própria UI (ex.: um
+        item de menu no Painel dela) do mesmo jeito."""
+        dialogo = _DialogoConfiguracoes(self._limite_janelas_destacadas, self._chacoalhada_ativa, self)
+        if dialogo.exec() == QDialog.Accepted:
+            self._limite_janelas_destacadas = dialogo.limite_janelas_destacadas
+            self._chacoalhada_ativa = dialogo.chacoalhada_ativa
+            self._persistencia.salvar_configuracoes({
+                "limite_janelas_destacadas": self._limite_janelas_destacadas,
+                "chacoalhada_ativa": self._chacoalhada_ativa,
+            })
 
     def _ticket_clicado(self, ticket):
-        """Clicar num ticket agora ABRE O PAINEL DE DETALHES (2026-08-15,
-        pedido do usuário) em vez de ir direto pro navegador - abrir o link
-        de verdade virou um botão dentro do painel ("Abrir ticket", ver
-        `_abrir_ticket`). Posicionado à DIREITA da janela principal (mesma
-        borda/topo), fora da coluna estreita da barra de categorias."""
-        self._painel_detalhes.mostrar(
-            ticket, self.x() + self.width() + ESPACAMENTO_PAINEL_DETALHES, self.y(),
-        )
+        """Controle de instância (2026-08-15, ver
+        argus_painel_detalhes_ticket.md, "Controle de instâncias") - nunca
+        cria uma segunda janela pro mesmo ticket:
+        1. já destacado -> traz a janela pra frente + efeito de atenção.
+        2. já no painel anexado -> mantém e atualiza os dados.
+        3. nenhum dos dois -> fecha o painel anexado atual (se houver algum
+           ticket nele) e abre um painel NOVO do zero pro ticket clicado.
+
+        🔥 Simplificado (2026-08-16, bug relatado pelo usuário mesmo depois
+        de uma tentativa anterior de correção: "ainda esta tendo problema de
+        tickets se sobrepondo, e n trocando qnd seleciono outro... é p ser
+        simples, clicou no ticket apareceu ele do lado, clicou em outro
+        ticket, some o anterior e abre o novo") - a versão anterior
+        reaproveitava a mesma instância com crossfade animado; removido
+        (ver `_PainelDetalhesTicket`) porque só foi validado por chamada
+        síncrona em teste automatizado, nunca pela animação de verdade no
+        loop de eventos real - fechar e recriar do zero é mais simples e
+        elimina essa classe inteira de bug de sincronismo.
+
+        🔥 Correção (2026-08-16, bug relatado pelo usuário com print de tela:
+        "se eu desfixo um ticket, clico em outro, e volto nesse q esta
+        desfixado, não é para ter nenhum fixado... assim que clico em um
+        ticket, apenas o selecionado tem de aparecer") - trazer uma janela
+        DESTACADA pra frente também fecha o painel ANEXADO (se estiver
+        mostrando outro ticket), que senão continuava aberto/destacado na
+        lista junto com a janela destacada - dois tickets pareciam
+        "selecionados" ao mesmo tempo. Outras janelas destacadas (de
+        OUTROS tickets) continuam existindo - só o slot anexado (a "seleção
+        implícita" de quem não foi destacado de propósito) é fechado."""
+        if ticket.chave in self._janelas_destacadas:
+            painel = self._janelas_destacadas[ticket.chave]
+            painel.atualizar_se_mostrando(ticket)
+            painel.trazer_para_frente_com_atencao()
+            self._fechar_anexado_se_visivel()
+            return
+
+        if self._painel_anexado.ticket_atual_chave() == ticket.chave:
+            self._painel_anexado.atualizar_se_mostrando(ticket)
+            return
+
+        self._painel_anexado.close()
+        self._painel_anexado.deleteLater()
+        self._painel_anexado = self._criar_painel_detalhes()
+        self._painel_anexado.preparar_conteudo(ticket)
+
+        largura = LARGURA_PAINEL_DETALHES
+        x, lado, area = self._calcular_lado_e_x(largura)
+        altura = min(self._painel_anexado.sizeHint().height(), area.height() - MARGEM_VERTICAL_TELA_PAINEL_DETALHES)
+        y = self._calcular_y_clampado(area, altura)
+        self._painel_anexado.mostrar(x, y, largura, int(altura), lado)
+
+        self._atualizar_painel_se_aberto()
+
+    def _fechar_anexado_se_visivel(self):
+        """Fecha e descarta o painel anexado atual, se estiver visível
+        mostrando ALGUM ticket - usado ao trazer uma janela DESTACADA pra
+        frente (ver `_ticket_clicado`) pra nunca deixar dois tickets
+        "selecionados" ao mesmo tempo (um destacado em foco + outro ainda
+        aberto no slot anexado)."""
+        if not self._painel_anexado.isVisible():
+            return
+        self._painel_anexado.close()
+        self._painel_anexado.deleteLater()
+        self._painel_anexado = self._criar_painel_detalhes()
+        self._atualizar_painel_se_aberto()
+
+    def _calcular_lado_e_x(self, largura):
+        """Decide o lado (direita/esquerda) considerando o monitor ATUAL do
+        Argus (2026-08-15, ver argus_painel_detalhes_ticket.md, "Múltiplos
+        monitores") - prefere a direita; só vai pra esquerda se não couber na
+        área útil do monitor (resolução/escala/barra de tarefas)."""
+        tela = self.screen() or QGuiApplication.primaryScreen()
+        area = tela.availableGeometry()
+        x_direita = self.x() + self.width() + ESPACAMENTO_PAINEL_DETALHES
+        if x_direita + largura <= area.right():
+            return x_direita, "direita", area
+        x_esquerda = max(area.left(), self.x() - ESPACAMENTO_PAINEL_DETALHES - largura)
+        return x_esquerda, "esquerda", area
+
+    def _calcular_y_clampado(self, area, altura):
+        return max(area.top(), min(self.y(), area.bottom() - altura))
+
+    def _alternar_destaque(self, painel):
+        if painel.destacado:
+            self._reanexar(painel)
+        else:
+            self._destacar(painel)
+
+    def _destacar(self, painel):
+        if len(self._janelas_destacadas) >= self._limite_janelas_destacadas:
+            _DialogoAvisoLimite(self._limite_janelas_destacadas, self).exec()
+            return
+        ticket = painel._ticket
+        x, y, largura, altura = self._geometria_para_destacar(painel)
+        painel.tornar_destacado(x, y, largura, altura)
+        self._janelas_destacadas[ticket.chave] = painel
+        self._painel_anexado = self._criar_painel_detalhes()
+        self._atualizar_painel_se_aberto()
+
+    def _reanexar(self, painel):
+        ticket = painel._ticket
+        self._janelas_destacadas.pop(ticket.chave, None)
+        painel.fechar_definitivo()
+        self._ticket_clicado(ticket)
+
+    def _geometria_para_destacar(self, painel):
+        """Sem memória persistida entre sessões (2026-08-16, pedido do
+        usuário: "se o problema é ficar salvando na memória posição de
+        tickets, pode desconsiderar essa ideia") - parte sempre da posição
+        atual do painel anexado, com uma cascata (`PASSO_CASCATA_JANELAS_DESTACADAS`
+        × quantas já estão destacadas) só pra não nascerem exatamente
+        empilhadas quando o usuário destaca vários seguidos."""
+        largura, altura = painel.width(), max(painel.height(), 320)
+        x, y = painel.x() + 24, painel.y() + 24
+        deslocamento = len(self._janelas_destacadas) * PASSO_CASCATA_JANELAS_DESTACADAS
+        x += deslocamento
+        y += deslocamento
+        tela = self.screen() or QGuiApplication.primaryScreen()
+        area = tela.availableGeometry()
+        largura = min(largura, area.width())
+        altura = min(altura, area.height())
+        x = max(area.left(), min(x, area.right() - largura))
+        y = max(area.top(), min(y, area.bottom() - altura))
+        return x, y, largura, altura
+
+    def _fechar_painel_detalhes(self, painel):
+        if painel.destacado:
+            chave = painel.ticket_atual_chave()
+            self._janelas_destacadas.pop(chave, None)
+            painel.fechar_definitivo()
+        else:
+            # 🔥 Fecha e joga fora de vez (2026-08-16) - mesmo princípio da
+            # simplificação de `_ticket_clicado`: sempre um slot anexado
+            # NOVO/vazio depois de fechar, nunca uma instância "escondida"
+            # reaproveitada por engano depois.
+            painel.close()
+            painel.deleteLater()
+            self._painel_anexado = self._criar_painel_detalhes()
+        self._atualizar_painel_se_aberto()
 
     def _abrir_ticket(self, ticket):
         webbrowser.open(ticket.url)
@@ -953,57 +2044,36 @@ class ArgusWidget(QWidget):
     # --- janela (pintura/máscara/posição) -------------------------------------
 
     def paintEvent(self, evento):
-        """🔥 Com cantos nativos do DWM (`_cantos_nativos_ok`), o Windows já
-        recorta a janela pro formato arredondado - só precisa preencher um
-        retângulo normal, sem `QPainterPath`/`setMask` nenhum (2026-08-15,
-        achado pesquisando amnweb/yasb - ver win32_dwm.py). Sem suporte, cai
-        pro desenho manual de sempre.
-
-        🔥 Acrylic (2026-08-15, testado com 3 níveis e escolhido alpha 120) -
-        com Acrylic aplicado de verdade, o preenchimento próprio da janela é
-        pulado por completo (só a borda sutil é desenhada) pra deixar o blur
-        nativo do Windows aparecer - preencher em cima dele esconderia o
-        efeito, mesmo problema que o Mica teve."""
         pintor = QPainter(self)
         pintor.setRenderHint(QPainter.Antialiasing)
-
-        if self._acrylic_ok:
-            if self._cantos_nativos_ok:
-                pintor.setPen(QColor(BORDA_SUTIL))
-                pintor.drawRect(self.rect().adjusted(0, 0, -1, -1))
-            else:
-                caminho = QPainterPath()
-                caminho.addRoundedRect(self.rect(), RAIO_CANTO, RAIO_CANTO)
-                pintor.setPen(QColor(BORDA_SUTIL))
-                pintor.drawPath(caminho)
-            return
-
-        cor_fundo = QColor(SURFACE_COLOR)
-        cor_fundo.setAlpha(ALPHA_FUNDO_COM_MICA if self._mica_ok else ALPHA_FUNDO_SEM_MICA)
-
-        if self._cantos_nativos_ok:
-            pintor.fillRect(self.rect(), cor_fundo)
-            return
-
-        caminho = QPainterPath()
-        caminho.addRoundedRect(self.rect(), RAIO_CANTO, RAIO_CANTO)
-        pintor.fillPath(caminho, cor_fundo)
-        pintor.setPen(QColor(BORDA_SUTIL))
-        pintor.drawPath(caminho)
+        _pintar_fundo_janela(self, pintor, self._estado_janela)
 
     def resizeEvent(self, evento):
         super().resizeEvent(evento)
-        if not self._cantos_nativos_ok:
-            self._atualizar_mascara()
+        if not self._estado_janela["cantos_ok"]:
+            _aplicar_mascara_arredondada(self)
 
-    def _atualizar_mascara(self):
-        caminho = QPainterPath()
-        caminho.addRoundedRect(self.rect(), RAIO_CANTO, RAIO_CANTO)
-        self.setMask(QRegion(caminho.toFillPolygon().toPolygon()))
+    def moveEvent(self, evento):
+        """Recalcula a posição (e o lado) do painel anexado quando a janela
+        principal se move - inclusive entre monitores (2026-08-15, ver
+        argus_painel_detalhes_ticket.md, "Recalcular o lado de abertura
+        quando o Argus mudar de monitor"). Janelas destacadas não seguem -
+        elas são independentes por definição."""
+        super().moveEvent(evento)
+        if self._painel_anexado.isVisible() and not self._painel_anexado.destacado:
+            largura = self._painel_anexado.width()
+            altura = self._painel_anexado.height()
+            x, lado, area = self._calcular_lado_e_x(largura)
+            y = self._calcular_y_clampado(area, altura)
+            self._painel_anexado.reposicionar(x, y, lado)
 
     def _persistir_posicao(self):
         self._persistencia.salvar_posicao_janela(self.x(), self.y())
 
     def closeEvent(self, evento):
+        """Fechar a janela principal fecha o painel ANEXADO junto - janelas
+        DESTACADAS permanecem abertas (2026-08-15, ver
+        argus_painel_detalhes_ticket.md, "Fechamento")."""
         self._persistir_posicao()
+        self._painel_anexado.esconder()
         super().closeEvent(evento)
