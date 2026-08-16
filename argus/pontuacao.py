@@ -28,8 +28,32 @@ PONTUACAO_BASE_PRIORIDADE = {
 PONTUACAO_BASE_PADRAO = 50
 
 BONUS_URGENCIA_TEXTO = 20
+# 🔥 Piso pra urgência CONFIRMADA no texto (2026-08-15, pedido do usuário:
+# "quando eles falam que é urgente, normalmente é bem urgente mesmo, coisa de
+# resolver em poucas horas") - diferente do piso de SLA (removido, ver
+# `_bonus_sla` abaixo), esse sinal vem de alguém dizendo isso de propósito, não
+# só o relógio correndo - garante que um Lowest/Low com urgência real
+# confirmada no texto nunca fica pontuando abaixo de um High. Só vale se
+# `detectar_urgencia_no_texto` não achou negação (ver `_remover_negacoes`).
+PISO_PONTUACAO_URGENCIA_TEXTO = 75
 
-BONUS_SLA_ESTOURADO = 25
+# 🔥 Escalonamento por horas estouradas (2026-08-15, pedido do usuário: "um
+# ticket com prioridade baixa que já está com 20h negativas" ficava ATRÁS de
+# um High recém-aberto e não urgente, porque o bônus de SLA estourado era
+# fixo/+25, não importava há quanto tempo estourou) - cresce com
+# `INCREMENTO_SLA_POR_HORA_ESTOURADA` por hora de atraso REAL (`remainingTime.
+# millis` negativo = quanto estourou, ver `_obter_sla_info` em
+# jira_provider.py).
+#
+# 🔥 SEM piso pro SLA em si (2026-08-15, correção depois de testar o piso de
+# 85: "independente de estar estourado o SLA ou não, algo mais crítico, como
+# pedidos não integrando, é muito mais urgente" que uma requisição Lowest tipo
+# relatório) - um piso fixo faria QUALQUER SLA estourado (mesmo há poucos
+# minutos, numa Lowest) pular na frente de um High genuinamente mais crítico.
+# Só o acúmulo de MUITAS horas estouradas consegue empurrar uma prioridade
+# baixa pra cima de uma alta, não o simples fato de ter estourado.
+BONUS_SLA_ESTOURADO_BASE = 25
+INCREMENTO_SLA_POR_HORA_ESTOURADA = 2
 BONUS_SLA_MENOS_1H = 20
 BONUS_SLA_MENOS_4H = 10
 BONUS_SLA_MENOS_12H = 5
@@ -41,6 +65,20 @@ PALAVRAS_URGENCIA = (
     "paramos de vender", "parados", "parado", "não conseguimos vender", "nao conseguimos vender",
 )
 
+# 🔥 Negação (2026-08-15, achado real: "não é urgente" contém a substring
+# "urgente" e era classificado como urgente - o oposto do que o texto diz) -
+# REMOVE o trecho negado do texto antes de procurar `PALAVRAS_URGENCIA`, em vez
+# de descartar a detecção inteira, pra não perder um sinal de urgência
+# genuíno em outra parte do mesmo texto (ex.: "não é urgente, mas paramos de
+# vender" ainda precisa contar como urgente por causa da segunda parte).
+FRASES_NEGACAO_URGENCIA = (
+    "não é urgente", "nao e urgente", "não urgente", "nao urgente",
+    "sem urgência", "sem urgencia",
+    "não precisa ser imediato", "nao precisa ser imediato",
+    "não é crítico", "nao e critico", "não crítico", "nao critico",
+    "sem pressa",
+)
+
 
 def detectar_urgencia_no_texto(texto: str) -> bool:
     """Heurístico por palavra-chave (sem LLM/dependência nova) - mesmo espírito
@@ -48,15 +86,21 @@ def detectar_urgencia_no_texto(texto: str) -> bool:
     de verdade. Fácil de trocar por um classificador melhor depois, sem mudar
     quem chama isso (`JiraProvider`)."""
     texto_normalizado = texto.lower()
+    for frase in FRASES_NEGACAO_URGENCIA:
+        texto_normalizado = texto_normalizado.replace(frase, "")
     return any(palavra in texto_normalizado for palavra in PALAVRAS_URGENCIA)
 
 
 def _bonus_sla(sla_info: dict | None) -> int:
     if sla_info is None:
         return 0
+    restante_millis = sla_info.get("restante_millis", 0)
     if sla_info.get("breached"):
-        return BONUS_SLA_ESTOURADO
-    restante_horas = sla_info.get("restante_millis", 0) / 3_600_000
+        # `restante_millis` vem NEGATIVO quando estourado (ex.: -20h em millis)
+        # - negar dá quanto tempo passou do prazo, não só que passou.
+        horas_estouradas = max(0, -restante_millis) / 3_600_000
+        return round(BONUS_SLA_ESTOURADO_BASE + horas_estouradas * INCREMENTO_SLA_POR_HORA_ESTOURADA)
+    restante_horas = restante_millis / 3_600_000
     if restante_horas < 1:
         return BONUS_SLA_MENOS_1H
     if restante_horas < 4:
@@ -69,4 +113,7 @@ def _bonus_sla(sla_info: dict | None) -> int:
 def calcular_pontuacao_foco(prioridade: str, urgencia_no_texto: bool, sla_info: dict | None) -> int:
     base = PONTUACAO_BASE_PRIORIDADE.get(prioridade, PONTUACAO_BASE_PADRAO)
     bonus_texto = BONUS_URGENCIA_TEXTO if urgencia_no_texto else 0
-    return min(100, base + bonus_texto + _bonus_sla(sla_info))
+    pontuacao = base + bonus_texto + _bonus_sla(sla_info)
+    if urgencia_no_texto:
+        pontuacao = max(pontuacao, PISO_PONTUACAO_URGENCIA_TEXTO)
+    return min(100, pontuacao)
