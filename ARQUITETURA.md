@@ -458,10 +458,20 @@ comportamento do compositor de verdade).
 
 **Correção:** `_LinhaTicket._atualizar_estilo` e `_ChipCategoria.
 definir_aberta` trocaram `"transparent"` por `"rgba(0, 0, 0, 1)"` (alpha 1
-de 255) no estado de repouso - imperceptível a olho nu, mas "pintado" o
-suficiente pro Windows não tratar aquela área como clique-através. Validado
-ao vivo pelo usuário com o diagnóstico visual (`diagnostico_hover_argus_
-real.py`) rodando a janela real do Argus.
+de 255) no FUNDO do estado de repouso - imperceptível a olho nu, mas
+"pintado" o suficiente pro Windows não tratar aquela área como
+clique-através. Validado ao vivo pelo usuário com o diagnóstico visual
+(`diagnostico_hover_argus_real.py`) rodando a janela real do Argus.
+
+**Ajuste (2026-08-23, pedido do usuário: "achei feio esse fundo preto"):** a
+BORDA (`border: 1px solid ...`) tinha recebido o mesmo alpha 1, mas um traço
+fino de 1px ficou perceptível de verdade (antialiasing/composição de um
+traço tão fino "arredonda pra cima" a opacidade percebida, diferente de uma
+área grande de preenchimento) - virava uma linha escura visível em volta de
+cada ticket/cápsula, fugindo do visual "flutuante" pretendido. A borda
+voltou a ser `"transparent"` de verdade - ela não precisa do fix (é um
+traço, não uma área onde alguém tenta clicar); só o preenchimento (a área
+grande que realmente importa pro clique) fica com alpha 1.
 
 ## Menu de Configurações (2026-08-16)
 

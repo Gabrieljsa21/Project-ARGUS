@@ -387,9 +387,12 @@ class _ChipCategoria(_AreaComHover):
         # 🔥 `rgba(0, 0, 0, 1)` em vez de "transparent" (2026-08-23) - mesma
         # correção de `_LinhaTicket._atualizar_estilo` (ver comentário lá) -
         # alpha zero de verdade vira clique-através pro Windows numa janela
-        # translúcida/Acrylic; alpha 1 é imperceptível mas evita isso.
+        # translúcida/Acrylic; alpha 1 é imperceptível mas evita isso. Só no
+        # fundo, não na borda (traço de 1px fica visível mesmo com alpha 1 -
+        # "achei feio esse fundo preto" - a borda não precisa do fix, não é
+        # onde alguém tenta clicar).
         cor_fundo = HIGHLIGHT_COLOR if aberta else "rgba(0, 0, 0, 1)"
-        cor_borda = GAIA_GOLD if aberta else "rgba(0, 0, 0, 1)"
+        cor_borda = GAIA_GOLD if aberta else "transparent"
         self.setStyleSheet(
             f"_ChipCategoria {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 14px; }}"
         )
@@ -542,8 +545,19 @@ class _LinhaTicket(QWidget):
         # janela). Alpha 1 (imperceptível a olho nu, mas tecnicamente
         # "pintado") em vez de "transparent" resolve - a linha inteira
         # passa a responder.
+        #
+        # 🔥 Só no FUNDO, não na BORDA (2026-08-23, pedido do usuário: "achei
+        # feio esse fundo preto") - um traço de 1px com alpha 1 acaba
+        # ficando mais perceptível do que uma área grande com o mesmo alpha
+        # (a borda é fina o bastante pra qualquer antialiasing/composição
+        # "arredondar pra cima" a opacidade percebida) - virava uma linha
+        # escura visível em volta de cada ticket, não o efeito imperceptível
+        # pretendido. A borda não precisa do fix (é um traço de 1px, não uma
+        # área onde alguém realmente tenta clicar) - volta a ser
+        # "transparent" de verdade; só o preenchimento (a área grande que
+        # importa pro clique) fica com o alpha 1.
         cor_fundo = HIGHLIGHT_COLOR if destacar else "rgba(0, 0, 0, 1)"
-        cor_borda = GAIA_GOLD if destacar else "rgba(0, 0, 0, 1)"
+        cor_borda = GAIA_GOLD if destacar else "transparent"
         self.setStyleSheet(
             f"_LinhaTicket {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 8px; }}"
         )
