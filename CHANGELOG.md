@@ -8,6 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-23: Retentativa em toda chamada HTTP do Jira
+
+### Correções
+- `GET /rest/api/3/myself` (chamado no `__init__` do `JiraProvider`, pra descobrir a conta do usuário) podia falhar por timeout transitório e derrubar a abertura do Argus antes mesmo do widget existir - ficava de fora dos fixes de resiliência anteriores, que só protegem `atualizar()`. Corrigido no ponto mais baixo: `JiraProvider._obter` (por onde passa toda chamada HTTP da classe) agora tenta até 3 vezes com 2s de intervalo em erro de conexão/timeout - erro de status HTTP (401, 404) continua subindo na hora, sem retentar.
+
 ## [0.6.1] - 2026-08-23: Categoria da barra clicável em qualquer ponto
 
 ### Correções
