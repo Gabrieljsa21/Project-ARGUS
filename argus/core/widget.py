@@ -1555,6 +1555,11 @@ class ArgusWidget(QWidget):
         self._chips = []
         self._chave_categoria_aberta = None
         self._fixado = False
+        # 🔥 Busca em thread própria (2026-08-23, ver docstring de `atualizar()`
+        # pro motivo) - guarda a referência pra não deixar o QThread ser
+        # coletado pelo GC no meio da execução, e pra `atualizar()` saber se
+        # já tem uma busca em andamento.
+        self._tarefa_atualizacao = None
 
         # 🔥 Painel de detalhes anexado/destacado (2026-08-15, ver
         # argus_painel_detalhes_ticket.md) - `_painel_anexado` é a instância
@@ -1631,18 +1636,42 @@ class ArgusWidget(QWidget):
         falhava - o widget nem chegava a abrir. `atualizar()` também é
         chamada pelo QTimer de polling a cada N minutos, então sem essa
         proteção o MESMO tipo de falha quebraria silenciosamente o
-        monitoramento depois de aberto, não só na abertura. Agora uma falha
-        aqui só loga e mantém a última lista de categorias que já tinha
-        (vazia, na abertura) - tenta de novo sozinho no próximo ciclo do
-        QTimer, sem exigir reabrir o Argus."""
-        try:
-            self._categorias = self._provider.listar_categorias()
-        except Exception as e:
-            print(f"[Argus] Falha ao buscar dados do Jira (tentando de novo no próximo ciclo): {e}")
+        monitoramento depois de aberto, não só na abertura. Uma falha aqui
+        só loga e mantém a última lista de categorias que já tinha (vazia,
+        na abertura) - tenta de novo sozinho no próximo ciclo do QTimer, sem
+        exigir reabrir o Argus.
+
+        🔥 Busca em thread própria (2026-08-23, reportado pelo usuário: "pq
+        demora p abrir o argus pela gaia") - `self._provider.listar_categorias()`
+        faz VÁRIAS chamadas de rede sequenciais (JQL x4 + SLA/changelog/issue
+        vinculado por ticket), e essa função rodava direto na THREAD DA UI -
+        como `atualizar()` roda dentro do próprio `__init__`, abrir o Argus
+        pela GAIA travava a janela PRINCIPAL inteira (Painel, bandeja, tudo)
+        até a busca inteira terminar, minutos em alguns casos com a rede
+        instável observada nesta mesma sessão. Agora a busca roda numa
+        `_TarefaSegundoPlano` (mesmo QThread já usado pelo botão "Analisar")
+        - o widget abre e a janela principal da GAIA continua responsiva na
+        hora, os dados chegam e populam a barra assim que a busca terminar
+        (`_ao_atualizar_concluido`/`_ao_atualizar_falhou`, sempre na thread da
+        UI via Signal, nunca mexendo em widget Qt de dentro da thread de
+        fundo). Se uma busca anterior ainda estiver rodando quando o próximo
+        ciclo do QTimer disparar, este `atualizar()` simplesmente não
+        empilha outra - espera a atual terminar."""
+        if self._tarefa_atualizacao is not None and self._tarefa_atualizacao.isRunning():
             return
+        self._tarefa_atualizacao = _TarefaSegundoPlano(self._provider.listar_categorias, self)
+        self._tarefa_atualizacao.concluido.connect(self._ao_atualizar_concluido)
+        self._tarefa_atualizacao.erro.connect(self._ao_atualizar_falhou)
+        self._tarefa_atualizacao.start()
+
+    def _ao_atualizar_concluido(self, categorias):
+        self._categorias = categorias
         self._reconstruir_barra()
         QTimer.singleShot(0, self._atualizar_painel_se_aberto)
         self._atualizar_paineis_de_detalhes_abertos()
+
+    def _ao_atualizar_falhou(self, mensagem):
+        print(f"[Argus] Falha ao buscar dados do Jira (tentando de novo no próximo ciclo): {mensagem}")
 
     def _atualizar_paineis_de_detalhes_abertos(self):
         """Se prioridade/status/SLA/comentários mudarem num ticket que já

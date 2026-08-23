@@ -43,7 +43,12 @@ def main():
     persistencia = PersistenciaArquivo(caminho_config)
     widget = ArgusWidget(ProviderFalso(), persistencia, limite_janelas_destacadas=5)
     widget.show()
+    # 🔥 atualizar() busca em thread propria agora (2026-08-23, pra nao
+    # travar a janela principal da GAIA enquanto busca no Jira) - espera o
+    # QThread terminar antes de seguir.
+    widget._tarefa_atualizacao.wait()
     app.processEvents()
+    app.processEvents()  # 2a rodada: esvazia o singleShot(0) agendado dentro do Signal de conclusao
 
     print("OK: padrao do .env respeitado sem config salva:", widget._limite_janelas_destacadas == 5)
     print("OK: chacoalhada desligada por padrao:", widget._chacoalhada_ativa is False)

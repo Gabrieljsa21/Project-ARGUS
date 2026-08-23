@@ -371,6 +371,33 @@ onde uma categoria inteira falha na busca E um ticket específico falha só no
 SLA - confirmado que o ticket bom da mesma categoria e as outras categorias
 continuam aparecendo normalmente.
 
+**Busca em thread própria (2026-08-23, reportado pelo usuário: "pq demora p
+abrir o argus pela gaia"):** `self._provider.listar_categorias()` faz várias
+chamadas de rede sequenciais (JQL ×4 + SLA/changelog/issue vinculado por
+ticket) e essa função rodava direto na thread da UI - como `atualizar()`
+roda dentro do próprio `__init__`, abrir o Argus pela GAIA travava a JANELA
+PRINCIPAL inteira (Painel, bandeja, tudo) até a busca terminar, o que podia
+levar bastante tempo com a rede instável observada nesta mesma sessão
+(vários timeouts de 15s por chamada). `atualizar()` agora lança a busca numa
+`_TarefaSegundoPlano` (mesmo `QThread` já usado pelo botão "Analisar") - o
+widget abre e a janela principal continua responsiva na hora; os dados
+chegam e populam a barra assim que a busca terminar
+(`_ao_atualizar_concluido`/`_ao_atualizar_falhou`, sempre entregues de volta
+na thread da UI via Signal - nunca mexendo em widget Qt de dentro da thread
+de fundo). Uma chamada de `atualizar()` enquanto a busca anterior ainda
+está rodando simplesmente não empilha outra (`self._tarefa_atualizacao.
+isRunning()`).
+
+**Efeito colateral nos testes offscreen:** como a primeira carga não é mais
+síncrona, os 3 scripts em `testes/` que inspecionam `widget._categorias`
+logo após `widget.show()` precisaram de `widget._tarefa_atualizacao.wait()`
++ dois `app.processEvents()` (o primeiro entrega o Signal de conclusão, que
+só ENTÃO agenda o `singleShot(0)` de `_atualizar_painel_se_aberto` - o
+segundo esvazia esse timer) antes de continuar. Sem a segunda rodada, esse
+timer ficava pendente e disparava mais tarde, no meio de alguma interação
+não relacionada do teste - achado real rodando a suíte (regressão no teste
+de encolhimento de janela, "altura com categoria grande" saindo errada).
+
 ## Menu de Configurações (2026-08-16)
 
 As duas opções que antes só davam pra mudar editando `.env`/constante no
