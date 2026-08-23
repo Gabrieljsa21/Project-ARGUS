@@ -8,6 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-23: Borda escura indesejada no fix do clique-através
+
+### Correções
+- O fix do clique-através (alpha 1 em vez de "transparent") tinha sido aplicado também na BORDA de 1px da linha/cápsula, que ficou visível como um traço escuro em volta de cada ticket - antialiasing de um traço fino "arredonda pra cima" a opacidade percebida, diferente de uma área grande de preenchimento. Borda voltou a ser transparente de verdade; só o preenchimento (que é o que precisa não ser clique-através) ficou com alpha 1.
+
 ## [0.6.3] - 2026-08-23: Causa raiz real do clique/hover fora do texto
 
 ### Correções
