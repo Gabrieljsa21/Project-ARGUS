@@ -8,6 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-23: Categoria da barra clicável em qualquer ponto
+
+### Correções
+- A cápsula de categoria na barra ("Aguardando Atendimento (5)") só registrava clique/hover de forma confiável nos vãos vazios (borda) - o texto e o badge do contador engoliam o evento antes de chegar no chip, mesma pegadinha já corrigida na linha do ticket. Corrigido deixando os `QLabel` internos (bolinha, nome, badge) transparentes a mouse.
+
 ## [0.6.0] - 2026-08-23: Painel de detalhes anexado/destacado, robustez de rede e correções de clique
 
 ### Novidades

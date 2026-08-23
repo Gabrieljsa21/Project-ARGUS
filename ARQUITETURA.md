@@ -326,7 +326,20 @@ entre os dois labels) respondiam de forma confiável. Corrigido com
 `Qt.WA_TransparentForMouseEvents` nos dois `QLabel` - o clique atravessa
 direto pro `_LinhaTicket` em QUALQUER ponto da linha, texto ou vazio.
 
-## Resiliência a falha de rede (2026-08-23)
+**Mesma pegadinha na CATEGORIA da barra (2026-08-23, pedido do usuário: "o
+ticket só é selecionado se passar o mouse sobre o texto dele, tem de ser
+sobre todo o botão")** - achado investigando esse relato: `_ChipCategoria`
+(a cápsula "Aguardando Atendimento (5)" na barra) tem a MESMA estrutura de
+`_LinhaTicket` - um widget com `mousePressEvent`/`enterEvent`/`leaveEvent`
+próprios, mas com `QLabel`s internos (bolinha, nome, badge do contador) por
+cima engolindo o evento antes de chegar no chip. Confirmado com
+`chip.childAt(ponto)` (o mesmo hit-test que o Qt usa de verdade pra
+clique/hover): sobre o texto/badge devolvia o `QLabel` filho, não o chip -
+só a borda/vão vazio respondia de forma confiável. Corrigido com o mesmo
+`Qt.WA_TransparentForMouseEvents` nos três `QLabel` internos (bolinha, nome,
+badge). `_LinhaTicket` (linha do ticket na lista) já tinha sido corrigido
+antes (ver acima) e foi reconfirmado com o mesmo teste de `childAt()` -
+continua correto em qualquer ponto da linha.
 
 Reportado tentando abrir o Argus pela GAIA: `HTTPSConnectionPool... Connection
 to nordwareservices.atlassian.net timed out` - uma falha de rede/timeout

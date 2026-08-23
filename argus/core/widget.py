@@ -333,11 +333,18 @@ class _ChipCategoria(_AreaComHover):
         cor_bolinha = GAIA_GOLD if tem_novidade else GAIA_SILVER
         bolinha = QLabel("●")
         bolinha.setStyleSheet(f"color: {cor_bolinha}; background: transparent; border: none; font-size: 9px;")
+        # 🔥 Correção (2026-08-24, mesma pegadinha do Qt já corrigida em
+        # `_LinhaTicket` - ver ARQUITETURA.md "Campo INTEIRO clicável de
+        # verdade") - sem isso, passar o mouse/clicar em cima da bolinha ou
+        # do nome engole o evento antes de chegar no chip, e só o vão vazio
+        # (ou a borda) responde de forma confiável.
+        bolinha.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(bolinha)
 
         nome = QLabel(categoria.nome_exibicao)
         nome.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_NOME))
         nome.setStyleSheet(f"color: {TEXT_COLOR}; background: transparent; border: none;")
+        nome.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(nome)
 
         cor_badge = GAIA_GOLD if tem_novidade else HIGHLIGHT_COLOR
@@ -359,6 +366,7 @@ class _ChipCategoria(_AreaComHover):
             f"background-color: {cor_badge}; color: {cor_texto_badge}; "
             "border-radius: 10px;"
         )
+        self._badge.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(self._badge)
 
         self.definir_aberta(False)
