@@ -384,8 +384,12 @@ class _ChipCategoria(_AreaComHover):
 
     def definir_aberta(self, aberta: bool):
         self._aberta = aberta
-        cor_fundo = HIGHLIGHT_COLOR if aberta else "transparent"
-        cor_borda = GAIA_GOLD if aberta else "transparent"
+        # 🔥 `rgba(0, 0, 0, 1)` em vez de "transparent" (2026-08-23) - mesma
+        # correção de `_LinhaTicket._atualizar_estilo` (ver comentário lá) -
+        # alpha zero de verdade vira clique-através pro Windows numa janela
+        # translúcida/Acrylic; alpha 1 é imperceptível mas evita isso.
+        cor_fundo = HIGHLIGHT_COLOR if aberta else "rgba(0, 0, 0, 1)"
+        cor_borda = GAIA_GOLD if aberta else "rgba(0, 0, 0, 1)"
         self.setStyleSheet(
             f"_ChipCategoria {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 14px; }}"
         )
@@ -520,8 +524,26 @@ class _LinhaTicket(QWidget):
 
     def _atualizar_estilo(self):
         destacar = self._hover or self._selecionado
-        cor_fundo = HIGHLIGHT_COLOR if destacar else "transparent"
-        cor_borda = GAIA_GOLD if destacar else "transparent"
+        # 🔥 Correção (2026-08-23, bug real confirmado com um diagnóstico
+        # visual rodando a janela REAL do Argus - ver
+        # testes/diagnostico_hover_argus_real.py, reportado pelo usuário
+        # depois de já ter confirmado que o `_LinhaTicket` sozinho, numa
+        # janela normal/opaca, respondia certinho em qualquer ponto) -
+        # `background-color: transparent` é alpha ZERO de verdade, e numa
+        # janela `WA_TranslucentBackground`/Acrylic como a do Argus, o
+        # Windows trata pixel com alpha zero como CLIQUE-ATRAVÉS pra quem
+        # estiver atrás da janela no desktop - o evento nem chega no Qt.
+        # Só os glifos de texto (opacos, pintados pelos `QLabel` por cima)
+        # tinham alpha > 0 e por isso respondiam; o resto da linha (onde
+        # não tem texto) ficava "morto" pro mouse mesmo com
+        # `Qt.WA_TransparentForMouseEvents` certo nos labels (aquele fix
+        # resolve o ROTEAMENTO dentro do Qt - qual widget recebe o evento -
+        # não o alpha que o Windows usa pra decidir se entrega o evento pra
+        # janela). Alpha 1 (imperceptível a olho nu, mas tecnicamente
+        # "pintado") em vez de "transparent" resolve - a linha inteira
+        # passa a responder.
+        cor_fundo = HIGHLIGHT_COLOR if destacar else "rgba(0, 0, 0, 1)"
+        cor_borda = GAIA_GOLD if destacar else "rgba(0, 0, 0, 1)"
         self.setStyleSheet(
             f"_LinhaTicket {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 8px; }}"
         )

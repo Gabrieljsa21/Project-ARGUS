@@ -8,6 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-23: Causa raiz real do clique/hover fora do texto
+
+### Correções
+- Ticket/categoria continuavam só respondendo a clique/hover em cima do texto mesmo depois dos fixes anteriores - causa raiz real (achada com um diagnóstico visual rodando a janela de verdade do Argus): fundo `transparent` é alpha zero de verdade, e numa janela translúcida (`WA_TranslucentBackground` + Acrylic, como a do Argus) o Windows trata isso como clique-através pro que estiver atrás na área de trabalho - só os glifos de texto (opacos) respondiam. Corrigido usando `rgba(0, 0, 0, 1)` (imperceptível, mas tecnicamente pintado) em vez de `transparent` no repouso da linha do ticket e da cápsula de categoria.
+
 ## [0.6.2] - 2026-08-23: Retentativa em toda chamada HTTP do Jira
 
 ### Correções
