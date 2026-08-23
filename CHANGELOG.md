@@ -8,6 +8,8 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-23: Painel de detalhes anexado/destacado, robustez de rede e correções de clique
+
 ### Novidades
 - Painel de detalhes reescrito como extensão visual do Argus: fica **anexado** (segue a janela principal; clicar em outro ticket fecha o anterior e abre um novo, na hora, sem animação) e pode ser **destacado** em janela independente arrastável via uma pequena barra centralizada no cabeçalho.
 - Controle de instância: cada ticket abre no máximo 1 painel (nunca duas janelas pro mesmo ticket) - clicar num ticket já destacado traz a janela pra frente com um pulso de atenção na borda.
