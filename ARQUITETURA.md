@@ -457,21 +457,25 @@ DENTRO do Qt que os fixes anteriores resolveram (por isso pareciam
 comportamento do compositor de verdade).
 
 **Correção:** `_LinhaTicket._atualizar_estilo` e `_ChipCategoria.
-definir_aberta` trocaram `"transparent"` por `"rgba(0, 0, 0, 1)"` (alpha 1
-de 255) no FUNDO do estado de repouso - imperceptível a olho nu, mas
-"pintado" o suficiente pro Windows não tratar aquela área como
-clique-através. Validado ao vivo pelo usuário com o diagnóstico visual
-(`diagnostico_hover_argus_real.py`) rodando a janela real do Argus.
+definir_aberta` trocaram `"transparent"` por um alpha quase-zero no FUNDO
+do estado de repouso - "pintado" o suficiente pro Windows não tratar aquela
+área como clique-através, mas imperceptível a olho nu. A BORDA
+(`border: 1px solid ...`) ficou de fora do fix de propósito - é um traço de
+1px, não uma área onde alguém tenta clicar, e um traço fino com alpha baixo
+fica mais perceptível (antialiasing "arredonda pra cima" a opacidade
+percebida) do que a mesma cor numa área grande de preenchimento - continua
+`"transparent"` de verdade.
 
-**Ajuste (2026-08-23, pedido do usuário: "achei feio esse fundo preto"):** a
-BORDA (`border: 1px solid ...`) tinha recebido o mesmo alpha 1, mas um traço
-fino de 1px ficou perceptível de verdade (antialiasing/composição de um
-traço tão fino "arredonda pra cima" a opacidade percebida, diferente de uma
-área grande de preenchimento) - virava uma linha escura visível em volta de
-cada ticket/cápsula, fugindo do visual "flutuante" pretendido. A borda
-voltou a ser `"transparent"` de verdade - ela não precisa do fix (é um
-traço, não uma área onde alguém tenta clicar); só o preenchimento (a área
-grande que realmente importa pro clique) fica com alpha 1.
+**Duas rodadas até acertar o valor (2026-08-23):** primeira tentativa foi
+`rgba(0, 0, 0, 1)`, pensando em "1 de 255" (quase nada). Resultado real
+(print de tela do usuário): um retângulo PRETO SÓLIDO atrás de cada
+ticket/cápsula, o oposto do pretendido - `rgba()` no QSS/CSS usa alpha como
+FRAÇÃO 0.0-1.0, não um inteiro 0-255, então `1` ali significa opacidade
+TOTAL. Corrigido pra `rgba(0, 0, 0, 0.004)` (≈1/255, o valor que a
+intenção original queria dizer). Validado ao vivo pelo usuário com o
+diagnóstico visual (`diagnostico_hover_argus_real.py`) rodando a janela
+real do Argus - clique/hover funcionando fora do texto, sem nenhum fundo
+escuro visível.
 
 ## Menu de Configurações (2026-08-16)
 

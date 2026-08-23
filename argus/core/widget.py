@@ -384,14 +384,20 @@ class _ChipCategoria(_AreaComHover):
 
     def definir_aberta(self, aberta: bool):
         self._aberta = aberta
-        # 🔥 `rgba(0, 0, 0, 1)` em vez de "transparent" (2026-08-23) - mesma
-        # correção de `_LinhaTicket._atualizar_estilo` (ver comentário lá) -
-        # alpha zero de verdade vira clique-através pro Windows numa janela
-        # translúcida/Acrylic; alpha 1 é imperceptível mas evita isso. Só no
-        # fundo, não na borda (traço de 1px fica visível mesmo com alpha 1 -
-        # "achei feio esse fundo preto" - a borda não precisa do fix, não é
-        # onde alguém tenta clicar).
-        cor_fundo = HIGHLIGHT_COLOR if aberta else "rgba(0, 0, 0, 1)"
+        # 🔥 `rgba(0, 0, 0, 0.004)` em vez de "transparent" (2026-08-23) -
+        # mesma correção de `_LinhaTicket._atualizar_estilo` (ver comentário
+        # lá) - alpha zero de verdade vira clique-através pro Windows numa
+        # janela translúcida/Acrylic. Só no fundo, não na borda (a borda não
+        # precisa do fix, não é onde alguém tenta clicar).
+        #
+        # 🔥 CORREÇÃO DE UNIDADE (2026-08-23, pedido do usuário: "oq me
+        # incomoda é esse preto destoando") - `rgba()` no QSS/CSS usa alpha
+        # como FRAÇÃO 0.0-1.0, não um inteiro 0-255 (pegadinha real - o
+        # "1" no `rgba(0, 0, 0, 1)` original virou opacidade TOTAL, não
+        # "1 de 255"). Resultado: um retângulo preto sólido bem visível atrás
+        # de cada cápsula, exatamente o oposto do "imperceptível" pretendido.
+        # `0.004` ≈ 1/255 é o valor que eu queria dizer desde o início.
+        cor_fundo = HIGHLIGHT_COLOR if aberta else "rgba(0, 0, 0, 0.004)"
         cor_borda = GAIA_GOLD if aberta else "transparent"
         self.setStyleSheet(
             f"_ChipCategoria {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 14px; }}"
@@ -527,36 +533,24 @@ class _LinhaTicket(QWidget):
 
     def _atualizar_estilo(self):
         destacar = self._hover or self._selecionado
-        # 🔥 Correção (2026-08-23, bug real confirmado com um diagnóstico
-        # visual rodando a janela REAL do Argus - ver
-        # testes/diagnostico_hover_argus_real.py, reportado pelo usuário
-        # depois de já ter confirmado que o `_LinhaTicket` sozinho, numa
-        # janela normal/opaca, respondia certinho em qualquer ponto) -
-        # `background-color: transparent` é alpha ZERO de verdade, e numa
-        # janela `WA_TranslucentBackground`/Acrylic como a do Argus, o
-        # Windows trata pixel com alpha zero como CLIQUE-ATRAVÉS pra quem
-        # estiver atrás da janela no desktop - o evento nem chega no Qt.
-        # Só os glifos de texto (opacos, pintados pelos `QLabel` por cima)
-        # tinham alpha > 0 e por isso respondiam; o resto da linha (onde
-        # não tem texto) ficava "morto" pro mouse mesmo com
-        # `Qt.WA_TransparentForMouseEvents` certo nos labels (aquele fix
-        # resolve o ROTEAMENTO dentro do Qt - qual widget recebe o evento -
-        # não o alpha que o Windows usa pra decidir se entrega o evento pra
-        # janela). Alpha 1 (imperceptível a olho nu, mas tecnicamente
-        # "pintado") em vez de "transparent" resolve - a linha inteira
-        # passa a responder.
+        # 🔥 Correção (2026-08-23, ver ARQUITETURA.md "Causa raiz real do
+        # clique/hover fora do texto") - `background-color: transparent` é
+        # alpha ZERO de verdade, e numa janela `WA_TranslucentBackground`/
+        # Acrylic como a do Argus, o Windows trata isso como CLIQUE-ATRAVÉS
+        # pra quem estiver atrás da janela no desktop - o evento nem chega
+        # no Qt. Só o FUNDO precisa do fix (é a área grande onde alguém
+        # tenta clicar) - a borda de 1px fica "transparent" de verdade
+        # mesmo (um traço fino não precisa disso, e alpha baixo num traço
+        # fica mais perceptível do que numa área grande).
         #
-        # 🔥 Só no FUNDO, não na BORDA (2026-08-23, pedido do usuário: "achei
-        # feio esse fundo preto") - um traço de 1px com alpha 1 acaba
-        # ficando mais perceptível do que uma área grande com o mesmo alpha
-        # (a borda é fina o bastante pra qualquer antialiasing/composição
-        # "arredondar pra cima" a opacidade percebida) - virava uma linha
-        # escura visível em volta de cada ticket, não o efeito imperceptível
-        # pretendido. A borda não precisa do fix (é um traço de 1px, não uma
-        # área onde alguém realmente tenta clicar) - volta a ser
-        # "transparent" de verdade; só o preenchimento (a área grande que
-        # importa pro clique) fica com o alpha 1.
-        cor_fundo = HIGHLIGHT_COLOR if destacar else "rgba(0, 0, 0, 1)"
+        # 🔥 CORREÇÃO DE UNIDADE (2026-08-23, pedido do usuário: "oq me
+        # incomoda é esse preto destoando") - `rgba()` no QSS/CSS usa alpha
+        # como FRAÇÃO 0.0-1.0, não um inteiro 0-255 (pegadinha real - o "1"
+        # em `rgba(0, 0, 0, 1)` virou opacidade TOTAL, não "1 de 255" como
+        # pretendido - resultado: um retângulo preto sólido, o oposto do
+        # "imperceptível" que era a intenção). `0.004` ≈ 1/255 é o valor
+        # certo.
+        cor_fundo = HIGHLIGHT_COLOR if destacar else "rgba(0, 0, 0, 0.004)"
         cor_borda = GAIA_GOLD if destacar else "transparent"
         self.setStyleSheet(
             f"_LinhaTicket {{ background-color: {cor_fundo}; border: 1px solid {cor_borda}; border-radius: 8px; }}"

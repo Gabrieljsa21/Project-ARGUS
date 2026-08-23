@@ -8,6 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-08-23: Preto sólido indesejado no fix do clique-através
+
+### Correções
+- O fix do clique-através (`rgba(0, 0, 0, 1)` no fundo em repouso) virou um retângulo PRETO SÓLIDO atrás de cada ticket/cápsula, em vez de imperceptível - `rgba()` no QSS/CSS usa alpha como fração 0.0-1.0, não um inteiro 0-255, então `1` significava opacidade total, não "1 de 255". Corrigido para `rgba(0, 0, 0, 0.004)` (≈1/255), o valor que a intenção original queria dizer.
+
 ## [0.6.4] - 2026-08-23: Borda escura indesejada no fix do clique-através
 
 ### Correções
