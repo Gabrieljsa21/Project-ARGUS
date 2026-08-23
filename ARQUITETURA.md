@@ -347,6 +347,30 @@ cobre os dois casos: falha na abertura E falha durante o uso normal (sem
 isso, um Wi-Fi instável quebraria o polling silenciosamente a cada ciclo
 ruim). Tenta de novo sozinho no próximo ciclo, sem exigir reabrir o Argus.
 
+**Segunda causa raiz da MESMA família, achada em uso real (2026-08-23):** o
+fix acima protege a ABERTURA do widget, mas o usuário relatou de novo
+("clicando no icone do argus e ele nao esta expandindo p mostrar as
+opcoes") - o widget abria (sem crash), mas a barra de categorias ficava
+sempre vazia, mesmo com a rede voltando a funcionar às vezes. Causa raiz
+real, achada lendo `logs/AAAA-MM-DD.log` (onde o `print()` do fix anterior
+realmente aparece, já que `run.py` roda sem console): `JiraProvider.
+buscar_dados_brutos()` processa as 4 categorias e todos os tickets de cada
+uma num loop só, SEM isolamento nenhum - um timeout processando UM ticket
+(SLA, changelog de status, issue vinculado de 2 saltos) ou buscando a JQL
+de UMA categoria lançava uma exceção que subia até o topo da função INTEIRA,
+descartando os dados de TODAS as categorias, mesmo as que já tinham sido
+buscadas com sucesso um instante antes no mesmo ciclo. Como isso repetia a
+cada poll, a barra nunca chegava a mostrar nada.
+
+Corrigido isolando cada categoria (a busca JQL) e cada ticket (o
+processamento de SLA/changelog/vínculo/urgência) no próprio
+`try/except requests.RequestException` - uma falha vira só um log
+(`buscar_dados_brutos`) e aquela categoria/ticket fica de fora SÓ NESTE
+ciclo, sem descartar o que já tinha dado certo. Validado com um `JiraProvider`
+onde uma categoria inteira falha na busca E um ticket específico falha só no
+SLA - confirmado que o ticket bom da mesma categoria e as outras categorias
+continuam aparecendo normalmente.
+
 ## Menu de Configurações (2026-08-16)
 
 As duas opções que antes só davam pra mudar editando `.env`/constante no
