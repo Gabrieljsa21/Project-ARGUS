@@ -350,37 +350,61 @@ class JiraProvider(NotificacaoProvider):
         chamada aqui, depois `classificar()` quantas vezes precisar (puro,
         sem rede). Antes (2026-08-15) esse custo de rede dobrava a cada ciclo
         porque duas checagens independentes chamavam `listar_categorias()`
-        cada uma com sua própria persistência."""
+        cada uma com sua própria persistência.
+
+        🔥 Isolamento por categoria/ticket (2026-08-23, reportado pelo
+        usuário: "clicando no icone do argus e ele nao esta expandindo p
+        mostrar as opcoes") - antes, uma falha de rede/timeout ao processar
+        UM ticket (SLA, changelog de status, issue vinculado de 2 saltos) ou
+        ao buscar a JQL de UMA categoria derrubava esta função INTEIRA sem
+        capturar nada - `ArgusWidget.atualizar()` (ver `core/widget.py`)
+        então não tinha dado NENHUM pra mostrar, mesmo quando as outras 3
+        categorias tinham buscado tudo certinho um instante antes (log real:
+        timeout buscando o issue vinculado de UM ticket "Aguardando
+        Desenvolvimento" zerava os chips de TODAS as categorias, ciclo após
+        ciclo). Agora cada categoria e cada ticket são isolados num
+        `try/except requests.RequestException` - uma falha vira só um log e
+        aquela categoria/ticket fica de fora NESTE ciclo (reaparece sozinho
+        assim que a rede normalizar), sem derrubar o resto que já tinha
+        dado certo."""
         dados = []
         for chave_cat, nome_cat, id_status in CATEGORIAS_STATUS:
             jql = f'assignee = currentUser() AND status = {id_status} ORDER BY updated DESC'
-            issues = self._buscar_issues(jql)
+            try:
+                issues = self._buscar_issues(jql)
+            except requests.RequestException as e:
+                print(f'[Argus] Falha ao buscar tickets de "{nome_cat}" (tentando de novo no próximo ciclo): {e}')
+                continue
             tickets_brutos = []
             for issue in issues:
                 chave_ticket = issue["key"]
-                campos = issue["fields"]
-                issue_novidade = self._resolver_issue_para_novidade(issue)
-                atual = self._estado_atual(issue_novidade)
-                prioridade = (campos.get("priority") or {}).get("name", "")
+                try:
+                    campos = issue["fields"]
+                    issue_novidade = self._resolver_issue_para_novidade(issue)
+                    atual = self._estado_atual(issue_novidade)
+                    prioridade = (campos.get("priority") or {}).get("name", "")
 
-                texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
-                urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
-                sla_info = self._obter_sla_info(chave_ticket)
-                pontuacao_foco = calcular_pontuacao_foco(prioridade, urgencia_no_texto, sla_info)
+                    texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
+                    urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
+                    sla_info = self._obter_sla_info(chave_ticket)
+                    pontuacao_foco = calcular_pontuacao_foco(prioridade, urgencia_no_texto, sla_info)
 
-                tickets_brutos.append({
-                    "chave": chave_ticket,
-                    "resumo": campos["summary"],
-                    "status": campos["status"]["name"],
-                    "prioridade": prioridade,
-                    "atualizado_em": campos["updated"],
-                    "pontuacao_foco": pontuacao_foco,
-                    "urgencia_no_texto": urgencia_no_texto,
-                    "atual": atual,
-                    "detalhe": self._extrair_campos_detalhe(campos),
-                    "sla_texto": (sla_info or {}).get("restante_texto", ""),
-                    "sla_estourado": bool(sla_info and sla_info.get("breached")),
-                })
+                    tickets_brutos.append({
+                        "chave": chave_ticket,
+                        "resumo": campos["summary"],
+                        "status": campos["status"]["name"],
+                        "prioridade": prioridade,
+                        "atualizado_em": campos["updated"],
+                        "pontuacao_foco": pontuacao_foco,
+                        "urgencia_no_texto": urgencia_no_texto,
+                        "atual": atual,
+                        "detalhe": self._extrair_campos_detalhe(campos),
+                        "sla_texto": (sla_info or {}).get("restante_texto", ""),
+                        "sla_estourado": bool(sla_info and sla_info.get("breached")),
+                    })
+                except requests.RequestException as e:
+                    print(f"[Argus] Falha ao processar o chamado {chave_ticket} (ignorado neste ciclo): {e}")
+                    continue
             dados.append((chave_cat, nome_cat, tickets_brutos))
         return dados
 
