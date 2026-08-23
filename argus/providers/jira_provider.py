@@ -24,6 +24,7 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 `/rest/api/3/project/NSD/statuses` - só valem PRA ESTE projeto (NSD); mudariam
 se um dia o fluxo for replicado em outro projeto Jira."""
 
+import time
 from typing import Callable
 
 import requests
@@ -92,10 +93,29 @@ class JiraProvider(NotificacaoProvider):
     def base_url(self) -> str:
         return self._base_url
 
-    def _obter(self, caminho: str, params: dict | None = None) -> dict:
-        resposta = requests.get(f"{self._base_url}{caminho}", auth=self._auth, params=params, timeout=15)
-        resposta.raise_for_status()
-        return resposta.json()
+    def _obter(self, caminho: str, params: dict | None = None, tentativas: int = 3) -> dict:
+        """🔥 Retentativa em timeout/conexão (2026-08-23, achado em uso real:
+        `nordwareservices.atlassian.net` engasga de forma transitória - visto
+        repetidas vezes nesta mesma investigação, sempre resolvendo sozinho
+        numa segunda tentativa, inclusive no PRÓPRIO `/rest/api/3/myself`
+        chamado no `__init__` - uma falha aí derrubava a abertura do Argus
+        inteira, antes mesmo de chegar em qualquer outro fix de resiliência
+        já feito em `buscar_dados_brutos`/`ArgusWidget.atualizar`). Só
+        retenta erro de CONEXÃO/timeout (`ConnectionError`/`Timeout` - cobre
+        `ConnectTimeout`, que herda de ambos) - um erro HTTP de verdade (401
+        credencial errada, 404 issue não existe) não muda tentando de novo,
+        então sobe na hora, sem esperar."""
+        ultimo_erro = None
+        for tentativa in range(1, tentativas + 1):
+            try:
+                resposta = requests.get(f"{self._base_url}{caminho}", auth=self._auth, params=params, timeout=15)
+                resposta.raise_for_status()
+                return resposta.json()
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                ultimo_erro = e
+                if tentativa < tentativas:
+                    time.sleep(2)
+        raise ultimo_erro
 
     def _obter_meu_account_id(self) -> str:
         return self._obter("/rest/api/3/myself")["accountId"]

@@ -341,6 +341,8 @@ badge). `_LinhaTicket` (linha do ticket na lista) já tinha sido corrigido
 antes (ver acima) e foi reconfirmado com o mesmo teste de `childAt()` -
 continua correto em qualquer ponto da linha.
 
+## Resiliência a falha de rede (2026-08-23)
+
 Reportado tentando abrir o Argus pela GAIA: `HTTPSConnectionPool... Connection
 to nordwareservices.atlassian.net timed out` - uma falha de rede/timeout
 transitória (comum, não é um bug do Jira nem de credencial) ao buscar os
@@ -410,6 +412,23 @@ segundo esvazia esse timer) antes de continuar. Sem a segunda rodada, esse
 timer ficava pendente e disparava mais tarde, no meio de alguma interação
 não relacionada do teste - achado real rodando a suíte (regressão no teste
 de encolhimento de janela, "altura com categoria grande" saindo errada).
+
+**Retentativa no HTTP de mais baixo nível (2026-08-23):** os fixes acima
+protegem contra uma falha de rede DEPOIS que a requisição já falhou, mas
+nenhum deles evita a falha em si. Confirmado repetidas vezes nesta mesma
+investigação (várias sessões, vários endpoints diferentes) que
+`nordwareservices.atlassian.net` engasga de forma transitória e
+praticamente sempre responde numa segunda tentativa - inclusive o PRÓPRIO
+`GET /rest/api/3/myself` chamado no `__init__` do `JiraProvider` (pra
+descobrir a conta do usuário), que ficava de FORA de todos os fixes
+anteriores (eles protegem `atualizar()`/`buscar_dados_brutos()`, não a
+construção do provider em si) - uma falha ali derrubava a abertura do Argus
+antes mesmo do `ArgusWidget` existir. `JiraProvider._obter` (o único ponto
+por onde passa TODA chamada HTTP da classe) agora tenta até 3 vezes com 2s
+de intervalo, só em cima de `ConnectionError`/`Timeout` (erro de
+conexão/timeout de verdade) - um erro HTTP de status (401 credencial
+errada, 404 issue não existe) sobe na hora, sem esperar, porque tentar de
+novo não muda o resultado.
 
 ## Menu de Configurações (2026-08-16)
 
