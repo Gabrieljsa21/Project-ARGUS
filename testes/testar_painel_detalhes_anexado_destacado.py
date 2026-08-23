@@ -43,7 +43,14 @@ def main():
     app = QApplication(sys.argv)
     widget = ArgusWidget(ProviderFalso(), PersistenciaArquivo(caminho_config), limite_janelas_destacadas=2)
     widget.show()
+    # 🔥 atualizar() busca em thread propria agora (2026-08-23, pra nao
+    # travar a janela principal da GAIA enquanto busca no Jira) - espera o
+    # QThread terminar e processa a fila de eventos pra garantir que o
+    # Signal de conclusao (_ao_atualizar_concluido) ja rodou antes de ler
+    # widget._categorias.
+    widget._tarefa_atualizacao.wait()
     app.processEvents()
+    app.processEvents()  # 2a rodada: esvazia o singleShot(0) agendado dentro do Signal de conclusao
 
     ticket_1 = widget._categorias[0].tickets[0]
     ticket_2 = widget._categorias[0].tickets[1]

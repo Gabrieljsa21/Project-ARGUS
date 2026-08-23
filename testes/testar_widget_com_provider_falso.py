@@ -44,7 +44,17 @@ def main():
     app = QApplication(sys.argv)
     widget = ArgusWidget(ProviderFalso(), PersistenciaArquivo(caminho_config))
     widget.show()
-    app.processEvents()  # esvazia o singleShot(0) agendado por atualizar() no __init__ antes de continuar
+    # 🔥 atualizar() busca em thread propria agora (2026-08-23, pra nao
+    # travar a janela principal da GAIA enquanto busca no Jira) - espera o
+    # QThread da busca inicial terminar. UM processEvents() só entrega o
+    # Signal de conclusao (que só ENTAO agenda o singleShot(0) de
+    # _atualizar_painel_se_aberto) - precisa de uma 2a rodada pra esvaziar
+    # esse timer tambem, senão ele fica pendente e dispara mais tarde, no
+    # meio de alguma interação NÃO relacionada do teste (achado real: sem
+    # isso, "encolheu de verdade" dava falso-negativo).
+    widget._tarefa_atualizacao.wait()
+    app.processEvents()
+    app.processEvents()
     print("OK: categorias:", [(c.chave, c.novidades, c.total) for c in widget._categorias])
     print("OK: chips (novidades):", [(c.categoria.chave) for c in widget._chips])
 
