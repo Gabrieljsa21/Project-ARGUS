@@ -105,10 +105,19 @@ def main():
         (widget._painel_anexado.x(), widget._painel_anexado.y()) == (x_esperado, y_esperado),
     )
 
-    # clicar de novo no MESMO ticket - não deve fechar/recriar nada.
+    # 🔥 toggle (2026-08-21, pedido do usuario: "em vez de so sair quando
+    # clicar em abrir, tira quando clico no campo") - clicar de novo no
+    # MESMO ticket ja aberto agora FECHA o painel; antes só saía marcando
+    # visto ao clicar "Abrir" (o link do Jira) ou trocando de ticket.
     painel_nsd1 = widget._painel_anexado
     widget._ticket_clicado(ticket_1)
-    print("OK: mesma instancia ao clicar de novo no mesmo ticket:", widget._painel_anexado is painel_nsd1)
+    print("OK: clicar de novo no mesmo ticket ja aberto fecha o painel (toggle):", not painel_nsd1.isVisible())
+    print("OK: abrir o ticket ja limpa o 'novo' dele, sem precisar clicar Abrir:", ticket_1.novo is False)
+
+    # reabre NSD-1 (fechado pelo toggle acima) pra seguir o roteiro de troca.
+    widget._ticket_clicado(ticket_1)
+    painel_nsd1 = widget._painel_anexado
+    print("OK: reabrir NSD-1 depois do toggle funciona:", widget._painel_anexado.ticket_atual_chave() == "NSD-1")
 
     # 🔥 troca SEM crossfade (2026-08-16, simplificação pedida pelo usuário
     # depois de bugs reais em uso: "clicou no ticket apareceu ele do lado,
@@ -120,6 +129,18 @@ def main():
     print("OK: virou uma instancia NOVA pra NSD-2:", widget._painel_anexado is not painel_nsd1)
     print("OK: anexado mostra NSD-2 na hora, sem esperar animacao:", widget._painel_anexado.ticket_atual_chave() == "NSD-2")
     app.processEvents()  # deixa o deleteLater() do painel antigo rodar
+
+    # 🔥 essa troca marca visto tanto NSD-1 quanto NSD-2 (2026-08-21, abrir o
+    # campo ja limpa a novidade - ver acima) - com os DOIS sem novidade, a
+    # categoria some do modo "novidades" e a lista embaixo se fecha sozinha
+    # (mesmo comportamento JA existente pra quando "Abrir" zera a novidade,
+    # ver `_atualizar_painel_se_aberto`) - não é regressão, é a MESMA regra
+    # de sempre agindo mais cedo. Reabre a categoria (equivalente a passar o
+    # mouse de novo) só pra checar o destaque de seleção na lista, sem
+    # depender de sobrar novidade.
+    print("OK: lista fecha sozinha quando a ultima novidade da categoria e vista:", not widget._painel.isVisible())
+    widget._mostrar_categoria(widget._categorias[0])
+    app.processEvents()
     print("OK: NSD-1 desselecionado e so NSD-2 destacado na lista:", _chaves_selecionadas() == {"NSD-2"})
 
     # 🔥 regressao do bug "os tickets estao se sobrepondo ao selecionar
