@@ -487,11 +487,21 @@ class _LinhaTicket(QWidget):
         prefixo.setTextFormat(Qt.RichText)
         prefixo.setFont(fonte)
         prefixo.setStyleSheet("background: transparent; border: none;")
+        # 🔥 Correção (2026-08-21, pedido do usuário: "a seleção no campo tem
+        # de ser se o mouse estiver no espaço inteiro, não apenas no texto") -
+        # sem isso, um QLabel filho engole o clique (mesma pegadinha real já
+        # documentada pro scroll em `_RepassaRoda`/`_ChipCategoria` acima) e
+        # `_LinhaTicket.mousePressEvent` só disparava fora do texto (nas
+        # margens/vãos entre os dois labels). Transparente pra mouse = o
+        # clique atravessa direto pro `_LinhaTicket` por baixo, em QUALQUER
+        # ponto da linha.
+        prefixo.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout_linha.addWidget(prefixo)
 
         resumo = QLabel(resumo_elidido)
         resumo.setFont(fonte)
         resumo.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
+        resumo.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout_linha.addWidget(resumo, 1)
 
         self._atualizar_estilo()
@@ -1610,8 +1620,26 @@ class ArgusWidget(QWidget):
         devolvia um valor desatualizado, mesmo problema de fundo do bug de
         encolhimento já corrigido (Qt só recalcula o layout de verdade 1 volta
         do event loop depois). Por isso o reenchimento do painel, quando ele
-        já está aberto, é adiado do mesmo jeito."""
-        self._categorias = self._provider.listar_categorias()
+        já está aberto, é adiado do mesmo jeito.
+
+        🔥 Correção (2026-08-23, reportado pelo usuário: "Não consegui abrir o
+        Argus: HTTPSConnectionPool... Connection timed out" tentando abrir
+        pela GAIA) - uma falha de rede/timeout ao consultar o Jira (comum,
+        transitória - servidor lento, Wi-Fi instável, VPN etc.) subia sem
+        tratamento daqui, e como esta função também roda dentro do
+        `__init__` (primeira carga), a criação do `ArgusWidget` INTEIRA
+        falhava - o widget nem chegava a abrir. `atualizar()` também é
+        chamada pelo QTimer de polling a cada N minutos, então sem essa
+        proteção o MESMO tipo de falha quebraria silenciosamente o
+        monitoramento depois de aberto, não só na abertura. Agora uma falha
+        aqui só loga e mantém a última lista de categorias que já tinha
+        (vazia, na abertura) - tenta de novo sozinho no próximo ciclo do
+        QTimer, sem exigir reabrir o Argus."""
+        try:
+            self._categorias = self._provider.listar_categorias()
+        except Exception as e:
+            print(f"[Argus] Falha ao buscar dados do Jira (tentando de novo no próximo ciclo): {e}")
+            return
         self._reconstruir_barra()
         QTimer.singleShot(0, self._atualizar_painel_se_aberto)
         self._atualizar_paineis_de_detalhes_abertos()
@@ -1924,7 +1952,23 @@ class ArgusWidget(QWidget):
         lista junto com a janela destacada - dois tickets pareciam
         "selecionados" ao mesmo tempo. Outras janelas destacadas (de
         OUTROS tickets) continuam existindo - só o slot anexado (a "seleção
-        implícita" de quem não foi destacado de propósito) é fechado."""
+        implícita" de quem não foi destacado de propósito) é fechado.
+
+        🔥 Toggle (2026-08-21, pedido do usuário: "em vez de só sair quando
+        clicar em abrir, tira quando clico no campo") - clicar de novo no
+        MESMO ticket já aberto no painel anexado agora FECHA o painel (só
+        pra esse caso; um ticket já destacado continua só trazendo a janela
+        pra frente, ver acima). Antes só saía marcando visto ao clicar
+        "Abrir" (link do Jira) ou trocando de ticket - clicar no campo pra
+        fechar o que já estava aberto não fazia nada.
+
+        🔥 Marca visto AQUI (2026-08-21, mesmo pedido) - abrir o ticket no
+        painel (o "campo" da lista) já limpa a novidade dele, sem precisar
+        clicar em "Abrir" no Jira pra isso (ver ARQUITETURA.md, "regra de
+        novidade": "só abrir o ticket individual... limpa a novidade").
+        Muda só o objeto Ticket em memória (`self._categorias` guarda a
+        MESMA referência) + reconstrói a barra - sem `atualizar()` completo
+        (que recarrega tudo do Jira), pra não pesar a rede num clique."""
         if ticket.chave in self._janelas_destacadas:
             painel = self._janelas_destacadas[ticket.chave]
             painel.atualizar_se_mostrando(ticket)
@@ -1933,7 +1977,7 @@ class ArgusWidget(QWidget):
             return
 
         if self._painel_anexado.ticket_atual_chave() == ticket.chave:
-            self._painel_anexado.atualizar_se_mostrando(ticket)
+            self._fechar_anexado_se_visivel()
             return
 
         self._painel_anexado.close()
@@ -1946,6 +1990,11 @@ class ArgusWidget(QWidget):
         altura = min(self._painel_anexado.sizeHint().height(), area.height() - MARGEM_VERTICAL_TELA_PAINEL_DETALHES)
         y = self._calcular_y_clampado(area, altura)
         self._painel_anexado.mostrar(x, y, largura, int(altura), lado)
+
+        if ticket.novo:
+            self._provider.marcar_visto(ticket.chave)
+            ticket.novo = False
+            self._reconstruir_barra()
 
         self._atualizar_painel_se_aberto()
 

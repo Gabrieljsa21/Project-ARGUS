@@ -15,6 +15,8 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 - Menu "Configurações..." na bandeja do sistema (`_DialogoConfiguracoes`): limite de janelas destacadas e chacoalhada de atenção agora são ajustáveis em tempo real e persistidos, sem precisar editar `.env`/código.
 - Ações rápidas do painel de detalhes viraram ícones compactos em vez de botões de texto: 🔗 Copiar link colado no código do ticket (à esquerda do cabeçalho), 📌 alfinete pro par Destacar/Reanexar (riscado quando já destacado) ao lado de ⟳ Atualizar e do ✕ Fechar (à direita), "Abrir no Jira" resumido pra "Abrir". Copiar código do ticket ao clicar no código.
 - Botões e campos do Argus passaram a seguir o PADRÃO VISUAL DA GAIA (agora o padrão de todos os projetos): ícones do cabeçalho viraram `QPushButton` nativo (era `QLabel`), variante de botão "preenchido" (dourado) pras ações principais, campo numérico "Cápsula" (era `QSpinBox` nativo) e toggle animado `Switch` (era `QCheckBox`) no menu de Configurações, que também ganhou layout em cards.
+- Mudança de status feita pelo próprio usuário deixou de contar como novidade - o ticket continua indo pra coluna/categoria certa, só não dispara mais aviso de voz nem o badge "NOVO" (checa o autor da última transição via changelog do Jira, só quando o status realmente mudou).
+- Clicar de novo no ticket já aberto no painel anexado agora FECHA o painel (toggle) - antes só saía marcando visto ao clicar "Abrir" (o link do Jira) ou ao trocar de ticket. Abrir o ticket no painel (clicar no campo da lista) já limpa a novidade dele na hora, sem precisar clicar "Abrir".
 
 ### Correções
 - Destacar vários tickets em seguida sem arrastar nenhum antes fazia as janelas independentes nascerem exatamente sobrepostas (empilhadas, indistinguíveis) - corrigido com um deslocamento em cascata a cada nova janela destacada.
@@ -27,6 +29,8 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 - Arrastar a barra do painel ANEXADO agora move a janela principal junto (antes só movia o painel, "desgrudando" visualmente da barra de status enquanto ainda vinculado) - o painel continua seguindo a principal sozinho, então os dois andam como um bloco só.
 - Invertida a diagonal do alfinete "riscado" (Reanexar) - cruzava demais o corpo do emoji e ficava pouco legível.
 - Destacar um ticket, abrir outro (no anexado) e depois voltar no destacado deixava os dois "selecionados" ao mesmo tempo (painel anexado continuava aberto atrás da janela destacada trazida pra frente) - corrigido fechando o anexado sempre que uma janela destacada volta ao foco.
+- A linha de um ticket na lista só registrava clique nos vãos vazios (margem/espaço entre o código e o resumo) - o texto em si engolia o clique (mesma pegadinha do Qt já documentada pro scroll, ver `_RepassaRoda`), então na prática só uma fração pequena da linha respondia de forma confiável. Corrigido deixando os `QLabel` internos transparentes a mouse - o clique atravessa pra linha em QUALQUER ponto, texto ou vazio.
+- Uma falha de rede/timeout transitória ao consultar o Jira (relatado ao tentar abrir o Argus pela GAIA: "Connection to nordwareservices.atlassian.net timed out") derrubava a criação do widget inteiro, já que `atualizar()` roda dentro do próprio `__init__` - o Argus simplesmente não abria. Corrigido: uma falha em `atualizar()` agora só é logada e mantém os dados que já existiam (vazio, na primeira abertura); o próximo ciclo do polling tenta de novo sozinho, sem precisar reabrir.
 
 ## [0.5.1] - 2026-08-15: Documentação em dia + origem do nome do repo
 

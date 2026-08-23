@@ -73,6 +73,16 @@ Um ticket entra no contador de **novidades** de uma categoria quando, desde a ú
 
 Implementação: exige um registro persistido por ticket (chave → timestamp/versão da última vez visto), comparado contra o estado atual do ticket a cada polling — mesmo padrão que `gmail_ultimo_id_visto` já usa na GAIA, adaptado pra granularidade de ticket em vez de e-mail. Precisa de rotina de limpeza (tickets resolvidos há N dias saem do registro).
 
+### Exceção: status mudado pelo próprio usuário (2026-08-21)
+
+Pedido do usuário: "quando a mudança for apenas de status realizada por mim, não precisa notificar como novo, apenas atualizar o ticket para a coluna nova" — mudar o status de um chamado ele mesmo (pelo Jira direto) não é "novidade" pra ele mesmo revisar depois; o ticket só precisa refletir a coluna/categoria nova, sem badge "NOVO" nem aviso de voz.
+
+`JiraProvider._classificar_evento` só sabe COMPARAR status (antigo vs. atual) — pra saber QUEM mudou, `_autor_ultima_mudanca_status` busca o changelog do issue (`GET /rest/api/3/issue/{chave}?expand=changelog`, percorrido de trás pra frente até achar o item mais recente com `field == "status"`) e compara o `accountId` do autor contra `self._minha_account_id`. Só chamado quando o status REALMENTE mudou desde o último `visto` (evento raro) — não pesa no polling normal, diferente do SLA/pontuação de foco que rodam pra todo ticket a cada ciclo.
+
+Pro vínculo de 2 saltos ("Aguardando desenvolvimento"), o changelog é consultado no MESMO issue usado pra novidade (o ticket vinculado de dev, não o NSD original) — por isso `_estado_atual` agora guarda também a `chave` do issue que gerou aquele estado, não só os campos comparados.
+
+A checagem de autor só suprime o tipo de evento `"status_mudou"` — se a MESMA atualização também trouxe outro evento (prioridade crítica, reatribuição, comentário de terceiro), esse outro evento ainda conta como novidade normalmente.
+
 ## Pontuação de foco (implementado, 2026-08-15)
 
 Ideia trazida de `triagem-inteligente-prototipo` (TechTalk "Triagem Inteligente
@@ -283,6 +293,59 @@ sessões se essa fosse a causa. O modelo atual (bem mais simples) é:
 Ver `testes/testar_painel_detalhes_anexado_destacado.py` pra validação do
 fluxo completo (anexar, trocar de ticket, destacar, reanexar, limite,
 cascata, destaque da lista, fechamento).
+
+**Toggle + limpar novidade ao abrir (2026-08-21, pedido do usuário: "em vez
+de só sair de novo quando clicar em abrir, tira quando clico no campo")** -
+antes, `ArgusWidget._ticket_clicado` só saía marcando `visto` (limpando a
+novidade) ao clicar no botão "Abrir" (o link do Jira, ver `_abrir_ticket`);
+clicar de novo no MESMO ticket já aberto no painel anexado não fazia nada.
+Agora:
+- Abrir um ticket (clicar no campo da lista) já marca `visto` na hora, se
+  ele estava `novo` - não precisa clicar "Abrir" pra isso (`_abrir_ticket`
+  continua marcando visto também, sem problema - é idempotente). Muda só o
+  objeto `Ticket` em memória + `_reconstruir_barra()`, sem `atualizar()`
+  completo (que recarrega tudo do Jira) - não pesa a rede num clique comum.
+- Clicar de novo no MESMO ticket já aberto no anexado agora FECHA o painel
+  (toggle) - reaproveita `_fechar_anexado_se_visivel`, mesmo método já usado
+  quando uma janela destacada volta ao foco. Ticket já destacado continua só
+  trazendo a janela pra frente (ver "Controle de instâncias" acima).
+- Consequência esperada (não é bug novo): se abrir um ticket zera as
+  novidades da categoria, e o Argus está no modo "novidades" (ver "Modelo de
+  interação da UI" abaixo), a lista se fecha sozinha - mesmo comportamento
+  que já existia pra quando "Abrir" zerava a última novidade, só que agora
+  também disparado pelo clique no campo.
+
+**Campo INTEIRO clicável de verdade (2026-08-21, pedido do usuário: "a
+seleção no campo tem de ser se o mouse estiver no espaço inteiro, não apenas
+no texto, tem que permitir clicar na parte vazia também")** - `_LinhaTicket`
+já tinha `mousePressEvent` no widget da linha inteira, mas os dois `QLabel`
+internos (código+pontuação, resumo) ficam por CIMA dele e engolem o clique
+antes que chegue no pai (mesma pegadinha real do Qt já documentada pro
+scroll em `_RepassaRoda`) - na prática só os vãos vazios (margem, espaço
+entre os dois labels) respondiam de forma confiável. Corrigido com
+`Qt.WA_TransparentForMouseEvents` nos dois `QLabel` - o clique atravessa
+direto pro `_LinhaTicket` em QUALQUER ponto da linha, texto ou vazio.
+
+## Resiliência a falha de rede (2026-08-23)
+
+Reportado tentando abrir o Argus pela GAIA: `HTTPSConnectionPool... Connection
+to nordwareservices.atlassian.net timed out` - uma falha de rede/timeout
+transitória (comum, não é um bug do Jira nem de credencial) ao buscar os
+tickets derrubava a criação do `ArgusWidget` INTEIRO, porque `atualizar()`
+(quem chama `self._provider.listar_categorias()`) roda dentro do próprio
+`__init__`. O widget nem chegava a existir - `ui/qt_painel.py::_abrir_argus_widget`
+(GAIA) capturava a exceção e só mostrava "Não consegui abrir o Argus: ...".
+
+`ArgusWidget.atualizar()` agora envolve a busca num `try/except Exception`
+amplo (não um tipo específico de exceção de rede - o `core/` não sabe/não
+deveria saber que o provider por baixo usa `requests`, só a interface
+`NotificacaoProvider`) - uma falha só loga no console e mantém `self._categorias`
+como estava (vazia, na primeira abertura; a última lista boa, num poll
+seguinte). Como `atualizar()` também é o método chamado pelo `QTimer` de
+polling (a cada `ARGUS_INTERVALO_POLLING_SEGUNDOS`), essa mesma proteção
+cobre os dois casos: falha na abertura E falha durante o uso normal (sem
+isso, um Wi-Fi instável quebraria o polling silenciosamente a cada ciclo
+ruim). Tenta de novo sozinho no próximo ciclo, sem exigir reabrir o Argus.
 
 ## Menu de Configurações (2026-08-16)
 

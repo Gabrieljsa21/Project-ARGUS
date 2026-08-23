@@ -130,6 +130,28 @@ class JiraProvider(NotificacaoProvider):
     def _eh_autor_automatico(self, nome_exibicao: str) -> bool:
         return nome_exibicao in AUTORES_AUTOMATICOS_IGNORADOS
 
+    def _autor_ultima_mudanca_status(self, chave: str) -> str | None:
+        """Account ID de quem fez a ÚLTIMA transição de status do ticket, via
+        changelog do Jira (2026-08-21, pedido do usuário: "quando a mudança
+        for apenas de status realizada por mim, não precisa notificar como
+        novo, apenas atualizar o ticket para a coluna nova") - só chamado
+        quando `_classificar_evento` já detectou que o status mudou desde o
+        último `visto` (evento raro, não pesa no polling normal - diferente
+        do SLA/pontuação de foco, que rodam pra TODO ticket a cada ciclo).
+        `expand=changelog` devolve o histórico embutido no próprio issue -
+        `histories` vem em ordem cronológica ASCENDENTE (mais antigo primeiro),
+        por isso percorre de trás pra frente e para no primeiro item cujo
+        campo é "status" (a transição mais recente)."""
+        try:
+            dados = self._obter(f"/rest/api/3/issue/{chave}", params={"fields": "status", "expand": "changelog"})
+        except requests.HTTPError:
+            return None
+        for historia in reversed(dados.get("changelog", {}).get("histories", [])):
+            for item in historia.get("items", []):
+                if item.get("field") == "status":
+                    return (historia.get("author") or {}).get("accountId")
+        return None
+
     # --- pontuação de foco: texto livre (descrição/comentário/print) + SLA ---
 
     @staticmethod
@@ -263,6 +285,13 @@ class JiraProvider(NotificacaoProvider):
         comentarios = campos.get("comment", {}).get("comments", [])
         ultimo = comentarios[-1] if comentarios else None
         return {
+            # 🔥 Chave do issue REALMENTE usado pra novidade (2026-08-21) - pro
+            # vínculo de 2 saltos ("Aguardando desenvolvimento"), é a chave do
+            # ticket VINCULADO (dev), não a do ticket NSD original (ver
+            # `_resolver_issue_para_novidade`) - o `status` abaixo já é dele,
+            # então o changelog de "quem mudou o status" (`_classificar_evento`)
+            # precisa ser consultado no MESMO issue, não no NSD.
+            "chave": issue["key"],
             "status": campos["status"]["name"],
             "prioridade": (campos.get("priority") or {}).get("name"),
             "assignee_id": (campos.get("assignee") or {}).get("accountId"),
@@ -277,13 +306,28 @@ class JiraProvider(NotificacaoProvider):
         que menciona código+status+urgência, nunca o resumo do ticket - ver
         ARQUITETURA.md). Ordem de checagem = ordem de importância: ticket
         nunca visto > virou crítico > mudou de status > mudou de prioridade
-        (não-crítica) > reatribuído > comentário de terceiro."""
+        (não-crítica) > reatribuído > comentário de terceiro.
+
+        🔥 Status mudado pelo PRÓPRIO usuário não conta como novidade
+        (2026-08-21, pedido do usuário: "quando a mudança for apenas de
+        status realizada por mim, não precisa notificar como novo, apenas
+        atualizar o ticket para a coluna nova") - o ticket ainda aparece na
+        coluna/categoria certa (isso vem de `atual["status"]`, sempre o
+        estado real do Jira, independente de novidade), só não dispara aviso
+        de voz nem o badge "NOVO" na lista. Só checa o autor quando o status
+        realmente mudou (`_autor_ultima_mudanca_status` custa 1 chamada de
+        rede) - continua descendo pras outras checagens (prioridade,
+        reatribuição, comentário) porque a MESMA atualização pode ter trazido
+        mais de um evento junto."""
         if visto is None:
             return True, "novo"
         prioridade_mudou = visto.get("prioridade") != atual["prioridade"]
         if prioridade_mudou and atual["prioridade"] in PRIORIDADES_CRITICAS:
             return True, "critico"
-        if visto.get("status") != atual["status"]:
+        status_mudou = visto.get("status") != atual["status"]
+        if status_mudou and self._autor_ultima_mudanca_status(atual["chave"]) == self._minha_account_id:
+            status_mudou = False
+        if status_mudou:
             return True, "status_mudou"
         if prioridade_mudou:
             return True, "prioridade_mudou"
