@@ -430,6 +430,39 @@ conexão/timeout de verdade) - um erro HTTP de status (401 credencial
 errada, 404 issue não existe) sobe na hora, sem esperar, porque tentar de
 novo não muda o resultado.
 
+## Causa raiz real do clique/hover fora do texto (2026-08-23)
+
+Os fixes anteriores (`Qt.WA_TransparentForMouseEvents` em `_LinhaTicket` e
+`_ChipCategoria`, ver seções acima) resolveram o roteamento de evento
+DENTRO do Qt (qual widget recebe o clique), mas o usuário continuou
+relatando "só seleciona em cima do texto" mesmo depois de confirmado que o
+código estava instalado e a Galateia reiniciada. Investigação com dois
+diagnósticos visuais manuais (`testes/diagnostico_hover_linha_ticket.py` e
+`testes/diagnostico_hover_argus_real.py`, este último sobe o `ArgusWidget`
+DE VERDADE com as mesmas flags de janela) isolou a variável real: o
+`_LinhaTicket` sozinho, numa janela NORMAL/opaca, respondia certinho em
+qualquer ponto da linha - só falhava dentro da janela FLUTUANTE real do
+Argus (sem borda, sempre no topo, `WA_TranslucentBackground` + Acrylic).
+
+**Causa raiz:** `background-color: transparent` é alpha ZERO de verdade.
+Numa janela translúcida do Windows, uma área com alpha zero é tratada como
+CLIQUE-ATRAVÉS pro que estiver atrás da janela no desktop - o evento nem
+chega a ser entregue à aplicação, muito menos ao Qt. Só os GLIFOS DE TEXTO
+(pintados pelos `QLabel` por cima, com cor opaca) tinham alpha > 0 e por
+isso respondiam; o resto da linha/chip (fundo "transparent" em repouso)
+ficava "morto" pro mouse - um problema de NÍVEL DE JANELA (Windows decidindo
+se entrega o evento), completamente diferente do problema de roteamento
+DENTRO do Qt que os fixes anteriores resolveram (por isso pareciam
+"corrigidos" nos testes automatizados/offscreen, que não simulam esse
+comportamento do compositor de verdade).
+
+**Correção:** `_LinhaTicket._atualizar_estilo` e `_ChipCategoria.
+definir_aberta` trocaram `"transparent"` por `"rgba(0, 0, 0, 1)"` (alpha 1
+de 255) no estado de repouso - imperceptível a olho nu, mas "pintado" o
+suficiente pro Windows não tratar aquela área como clique-através. Validado
+ao vivo pelo usuário com o diagnóstico visual (`diagnostico_hover_argus_
+real.py`) rodando a janela real do Argus.
+
 ## Menu de Configurações (2026-08-16)
 
 As duas opções que antes só davam pra mudar editando `.env`/constante no
