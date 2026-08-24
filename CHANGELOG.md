@@ -8,6 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-08-24: Lembrete de voz da GAIA não via ticket já visto no widget
+
+### Correções
+- `PersistenciaArquivo` carregava o arquivo (`~/.argus/config.json`) 1x na criação e guardava numa cópia em memória (`self._dado`) que nunca era recarregada - a GAIA mantém sua própria instância de longa duração (1x por processo) separada da instância que o widget usa (criada só quando o widget abre), então quando o usuário via um ticket no widget, a instância da GAIA continuava com o snapshot antigo pra sempre e o lembrete de voz seguia dizendo "tem ticket pendente" mesmo já visto. Corrigido lendo do disco a cada chamada (arquivo pequeno, custo desprezível) em vez de cachear em memória.
+
 ## [0.6.5] - 2026-08-23: Preto sólido indesejado no fix do clique-através
 
 ### Correções
