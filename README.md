@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="argus/assets/logo_argus.png" alt="Argus" width="180">
+</p>
+
 # Project-ARGUS
 
 Widget desktop que fica no topo mostrando novidade nos seus chamados do Jira
