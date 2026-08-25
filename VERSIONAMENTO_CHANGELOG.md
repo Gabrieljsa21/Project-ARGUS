@@ -1,6 +1,6 @@
 # Versionamento e CHANGELOG do Argus
 
-Mesmo padrão adotado no Project G.A.I.A. (repo `Project-GAIA`, ver `docs/VERSIONAMENTO_CHANGELOG.md` de lá) - histórico simples e padronizado, sem cerimônia que não se paga num projeto solo.
+Mesmo padrão adotado no Project GAIA (repo `Project-GAIA`, ver `docs/VERSIONAMENTO_CHANGELOG.md` de lá) - histórico simples e padronizado, sem cerimônia que não se paga num projeto solo.
 
 ## Padrões adotados
 
