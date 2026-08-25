@@ -2,7 +2,7 @@
   <img src="argus/assets/logo_argus.png" alt="Argus" width="180">
 </p>
 
-# Project-ARGUS
+# Project ARGUS
 
 Widget desktop que fica no topo mostrando novidade nos seus chamados do Jira
 (Nordware Service Desk) - sem precisar abrir o Jira ou depender de e-mail.
