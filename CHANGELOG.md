@@ -11,6 +11,9 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 ### Novidades
 - Passar o mouse somente sobre o número `[pontuação]` de um ticket agora mostra como a pontuação de foco foi calculada: base da prioridade do Jira, bônus de urgência textual, bônus de SLA, eventual piso por urgência e teto de 100. O restante da linha continua sem tooltip.
 
+### Correções
+- **Tooltips com fundo preto padrão do Qt, fora da paleta do Argus** - nenhum `QToolTip` tinha estilo próprio (pontuação, "Arrastar", botões de ícone, código do ticket). Corrigido com uma regra `QToolTip` global em `aplicar_estilo_global` (`core/tema.py`), cobrindo todos de uma vez.
+
 ## [0.6.6] - 2026-08-24: Lembrete de voz da GAIA não via ticket já visto no widget
 
 ### Correções

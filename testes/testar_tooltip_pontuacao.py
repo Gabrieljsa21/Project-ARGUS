@@ -10,6 +10,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
+from argus.core.tema import BORDA_SUTIL, SURFACE_COLOR, TEXT_COLOR, aplicar_estilo_global
 from argus.core.widget import _LinhaTicket
 from argus.modelos import Ticket
 from argus.pontuacao import calcular_detalhamento_pontuacao
@@ -105,6 +106,15 @@ class TooltipPontuacaoTest(unittest.TestCase):
         self.assertNotIn("SLA restante", tooltip)
         self.assertIn("Limite aplicado: 100", tooltip)
         linha.close()
+
+    def test_tooltip_segue_a_paleta_em_vez_do_preto_padrao_do_qt(self):
+        aplicar_estilo_global(self.app)
+        folha = self.app.styleSheet()
+
+        self.assertIn("QToolTip", folha)
+        self.assertIn(f"background-color: {SURFACE_COLOR}", folha)
+        self.assertIn(f"color: {TEXT_COLOR}", folha)
+        self.assertIn(f"border: 1px solid {BORDA_SUTIL}", folha)
 
 
 if __name__ == "__main__":

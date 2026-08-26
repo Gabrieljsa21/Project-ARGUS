@@ -49,6 +49,13 @@ def aplicar_estilo_global(app):
     versão fina dourada, sem botão de seta em cada ponta."""
     app.setStyle("Fusion")
     app.setStyleSheet(f"""
+        QToolTip {{
+            background-color: {SURFACE_COLOR};
+            color: {TEXT_COLOR};
+            border: 1px solid {BORDA_SUTIL};
+            border-radius: 6px;
+            padding: 6px 8px;
+        }}
         QScrollBar:vertical {{
             background: transparent;
             width: 10px;
