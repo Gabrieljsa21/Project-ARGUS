@@ -135,6 +135,16 @@ urgente" vs. "o que focar agora"). Aplicada só no código do ticket
 repetir o NOME da prioridade por extenso (a legenda das 5 cores, fixa no topo
 do painel de tickets, já cobre isso).
 
+## Tooltip fora da paleta (corrigido, 2026-08-26)
+
+Todo `setToolTip()` do Argus (pontuação de foco, "Arrastar", botões de ícone,
+código clicável do ticket) renderizava com o preto padrão do Qt - nenhum
+deles estiliza o `QToolTip` individualmente, e o `aplicar_estilo_global`
+(`core/tema.py`) nunca tinha uma regra pra isso. Corrigido com UMA regra
+`QToolTip` global (`SURFACE_COLOR`/`TEXT_COLOR`/`BORDA_SUTIL`, mesmo trio já
+usado em inputs/popups do resto do app) - cobre todos os tooltips de uma vez,
+não precisa estilizar cada widget individualmente.
+
 ## Painel de detalhes: anexado/destacado + análise via LLM opcional (2026-08-15)
 
 Clicar num ticket abre `_PainelDetalhesTicket`, com Time to resolution,
