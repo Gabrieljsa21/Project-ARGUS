@@ -31,7 +31,7 @@ import requests
 
 from ..modelos import Categoria, Ticket
 from ..persistencia import Persistencia
-from ..pontuacao import calcular_pontuacao_foco, detectar_urgencia_no_texto
+from ..pontuacao import calcular_detalhamento_pontuacao, detectar_urgencia_no_texto
 from ..seguranca import mascarar
 from .base import NotificacaoProvider
 
@@ -407,7 +407,9 @@ class JiraProvider(NotificacaoProvider):
                     texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
                     urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
                     sla_info = self._obter_sla_info(chave_ticket)
-                    pontuacao_foco = calcular_pontuacao_foco(prioridade, urgencia_no_texto, sla_info)
+                    detalhamento_pontuacao = calcular_detalhamento_pontuacao(
+                        prioridade, urgencia_no_texto, sla_info,
+                    )
 
                     tickets_brutos.append({
                         "chave": chave_ticket,
@@ -415,7 +417,8 @@ class JiraProvider(NotificacaoProvider):
                         "status": campos["status"]["name"],
                         "prioridade": prioridade,
                         "atualizado_em": campos["updated"],
-                        "pontuacao_foco": pontuacao_foco,
+                        "pontuacao_foco": detalhamento_pontuacao.total,
+                        "detalhamento_pontuacao": detalhamento_pontuacao,
                         "urgencia_no_texto": urgencia_no_texto,
                         "atual": atual,
                         "detalhe": self._extrair_campos_detalhe(campos),
@@ -451,6 +454,7 @@ class JiraProvider(NotificacaoProvider):
                     novo=novo,
                     tipo_evento=tipo_evento,
                     pontuacao_foco=tb["pontuacao_foco"],
+                    detalhamento_pontuacao=tb.get("detalhamento_pontuacao"),
                     urgencia_no_texto=tb["urgencia_no_texto"],
                     sla_texto=tb["sla_texto"],
                     sla_estourado=tb["sla_estourado"],

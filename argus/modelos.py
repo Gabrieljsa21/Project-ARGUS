@@ -4,6 +4,21 @@ barra, listas) só enxerga Ticket/Categoria - nunca um dict cru de resposta de A
 from dataclasses import dataclass, field
 
 
+@dataclass(frozen=True)
+class DetalhamentoPontuacao:
+    """Componentes auditáveis usados para chegar à pontuação de foco."""
+
+    prioridade: str
+    pontos_prioridade: int
+    bonus_urgencia: int
+    bonus_sla: int
+    sla_estourado: bool
+    piso_urgencia_aplicado: int | None
+    limite: int
+    teto_aplicado: bool
+    total: int
+
+
 @dataclass
 class Ticket:
     chave: str
@@ -25,6 +40,7 @@ class Ticket:
     # Argus, nunca escreve nada de volta no Jira (ver argus/pontuacao.py). 50 é
     # o valor neutro (prioridade "Medium") usado quando ainda não foi calculado.
     pontuacao_foco: int = 50
+    detalhamento_pontuacao: DetalhamentoPontuacao | None = None
     urgencia_no_texto: bool = False
     # 🔥 Detalhe pro painel de detalhes (2026-08-15, pedido do usuário: "abra
     # um modal a direita, com as informações mais detalhadas do ticket") - só

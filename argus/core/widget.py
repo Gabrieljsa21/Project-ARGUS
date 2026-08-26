@@ -501,13 +501,16 @@ class _LinhaTicket(QWidget):
         # escrever o NOME da prioridade (2026-08-15, "não precisa escrever
         # prioridade no nome, já tem legenda das cores") - a cor sozinha já
         # basta, a legenda no topo do painel explica o que cada uma significa.
-        prefixo = QLabel(
-            f'<span style="color:{cor_texto};">[{ticket.pontuacao_foco}]</span> '
-            f'<span style="color:{cor_prioridade};">{ticket.chave}</span>'
-        )
-        prefixo.setTextFormat(Qt.RichText)
+        pontuacao = QLabel(f"[{ticket.pontuacao_foco}]")
+        pontuacao.setObjectName("pontuacao_foco")
+        pontuacao.setFont(fonte)
+        pontuacao.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
+        pontuacao.setToolTip(self._tooltip_pontuacao(ticket))
+        layout_linha.addWidget(pontuacao)
+
+        prefixo = QLabel(ticket.chave)
         prefixo.setFont(fonte)
-        prefixo.setStyleSheet("background: transparent; border: none;")
+        prefixo.setStyleSheet(f"color: {cor_prioridade}; background: transparent; border: none;")
         # 🔥 Correção (2026-08-21, pedido do usuário: "a seleção no campo tem
         # de ser se o mouse estiver no espaço inteiro, não apenas no texto") -
         # sem isso, um QLabel filho engole o clique (mesma pegadinha real já
@@ -526,6 +529,24 @@ class _LinhaTicket(QWidget):
         layout_linha.addWidget(resumo, 1)
 
         self._atualizar_estilo()
+
+    @staticmethod
+    def _tooltip_pontuacao(ticket) -> str:
+        detalhes = ticket.detalhamento_pontuacao
+        if detalhes is None:
+            return f"Pontuação de foco: {ticket.pontuacao_foco}"
+        rotulo_sla = "SLA estourado" if detalhes.sla_estourado else "SLA restante"
+        linhas = [
+            f"<b>Pontuação de foco: {detalhes.total}</b>",
+            f"Prioridade {detalhes.prioridade}: {detalhes.pontos_prioridade} pontos",
+            f"Urgência detectada no texto: +{detalhes.bonus_urgencia}",
+            f"{rotulo_sla}: +{detalhes.bonus_sla}",
+        ]
+        if detalhes.piso_urgencia_aplicado is not None:
+            linhas.append(f"Piso por urgência aplicado: {detalhes.piso_urgencia_aplicado}")
+        if detalhes.teto_aplicado:
+            linhas.append(f"Limite aplicado: {detalhes.limite}")
+        return "<br>".join(linhas)
 
     def definir_selecionado(self, selecionado: bool):
         self._selecionado = selecionado

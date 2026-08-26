@@ -8,6 +8,9 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+### Novidades
+- Passar o mouse somente sobre o número `[pontuação]` de um ticket agora mostra como a pontuação de foco foi calculada: base da prioridade do Jira, bônus de urgência textual, bônus de SLA, eventual piso por urgência e teto de 100. O restante da linha continua sem tooltip.
+
 ## [0.6.6] - 2026-08-24: Lembrete de voz da GAIA não via ticket já visto no widget
 
 ### Correções
