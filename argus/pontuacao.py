@@ -18,6 +18,8 @@ compartilhada entre vários atendentes de várias empresas):
    request/{chave}/sla` - "Time to resolution").
 """
 
+from .modelos import DetalhamentoPontuacao
+
 PONTUACAO_BASE_PRIORIDADE = {
     "Lowest": 10,
     "Low": 30,
@@ -36,6 +38,7 @@ BONUS_URGENCIA_TEXTO = 20
 # confirmada no texto nunca fica pontuando abaixo de um High. Só vale se
 # `detectar_urgencia_no_texto` não achou negação (ver `_remover_negacoes`).
 PISO_PONTUACAO_URGENCIA_TEXTO = 75
+LIMITE_PONTUACAO_FOCO = 100
 
 # 🔥 Escalonamento por horas estouradas (2026-08-15, pedido do usuário: "um
 # ticket com prioridade baixa que já está com 20h negativas" ficava ATRÁS de
@@ -110,10 +113,33 @@ def _bonus_sla(sla_info: dict | None) -> int:
     return 0
 
 
-def calcular_pontuacao_foco(prioridade: str, urgencia_no_texto: bool, sla_info: dict | None) -> int:
+def calcular_detalhamento_pontuacao(
+    prioridade: str, urgencia_no_texto: bool, sla_info: dict | None,
+) -> DetalhamentoPontuacao:
     base = PONTUACAO_BASE_PRIORIDADE.get(prioridade, PONTUACAO_BASE_PADRAO)
     bonus_texto = BONUS_URGENCIA_TEXTO if urgencia_no_texto else 0
-    pontuacao = base + bonus_texto + _bonus_sla(sla_info)
-    if urgencia_no_texto:
-        pontuacao = max(pontuacao, PISO_PONTUACAO_URGENCIA_TEXTO)
-    return min(100, pontuacao)
+    bonus_sla = _bonus_sla(sla_info)
+    sla_estourado = bool(sla_info and sla_info.get("breached"))
+    pontuacao_sem_piso = base + bonus_texto + bonus_sla
+    piso_aplicado = (
+        PISO_PONTUACAO_URGENCIA_TEXTO
+        if urgencia_no_texto and pontuacao_sem_piso < PISO_PONTUACAO_URGENCIA_TEXTO
+        else None
+    )
+    pontuacao = max(pontuacao_sem_piso, piso_aplicado or 0)
+    return DetalhamentoPontuacao(
+        prioridade=prioridade,
+        pontos_prioridade=base,
+        bonus_urgencia=bonus_texto,
+        bonus_sla=bonus_sla,
+        sla_estourado=sla_estourado,
+        piso_urgencia_aplicado=piso_aplicado,
+        limite=LIMITE_PONTUACAO_FOCO,
+        teto_aplicado=pontuacao > LIMITE_PONTUACAO_FOCO,
+        total=min(LIMITE_PONTUACAO_FOCO, pontuacao),
+    )
+
+
+def calcular_pontuacao_foco(prioridade: str, urgencia_no_texto: bool, sla_info: dict | None) -> int:
+    """Compatibilidade com consumidores que precisam somente do total."""
+    return calcular_detalhamento_pontuacao(prioridade, urgencia_no_texto, sla_info).total

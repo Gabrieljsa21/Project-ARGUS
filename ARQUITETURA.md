@@ -85,6 +85,14 @@ A checagem de autor só suprime o tipo de evento `"status_mudou"` — se a MESMA
 
 ## Pontuação de foco (implementado, 2026-08-15)
 
+O número exibido entre colchetes na lista é também o único alvo do tooltip de
+explicabilidade: ao passar o mouse diretamente sobre `[pontuação]`, o Argus
+mostra a base correspondente à prioridade real, os bônus de urgência e SLA,
+eventual piso por urgência e o teto de 100. O detalhamento é produzido junto
+do cálculo, em vez de ser reconstruído pela interface, para que o valor exibido
+e sua explicação nunca usem regras diferentes. Nenhuma outra parte da linha
+abre esse tooltip.
+
 Ideia trazida de `triagem-inteligente-prototipo` (TechTalk "Triagem Inteligente
 com IA" do usuário) - decisão explícita: SÓ ordena/exibe a lista, NUNCA
 escreve nada de volta no Jira. `argus/pontuacao.py`, `calcular_pontuacao_foco`
