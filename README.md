@@ -44,10 +44,13 @@ atual". A barra mostra os 4 status do fluxo de atendimento
 (`assignee = currentUser()`), com toggle novidades/total ao clicar no ícone à
 esquerda (pavão de cristal, não mais um placeholder) e lista de tickets ao
 clicar num número, ordenada por pontuação de foco (1-100, combina
-prioridade + urgência no texto + SLA real) e colorida pela prioridade real do
-Jira. Passar o mouse diretamente sobre o número `[pontuação]` mostra a composição
-do valor (prioridade, urgência, SLA, eventual piso e teto); o restante da linha
-não abre esse tooltip. Clicar num ticket abre um painel de detalhes (Time to resolution,
+prioridade + urgência no texto + SLA real). O código do ticket é colorido pela
+prioridade real do Jira; o título muda de cor por SLA (vermelho estourado,
+laranja faltando menos de 1h, amarelo faltando menos de 2h) e ganha um sufixo
+com o tempo restante em horas. Passar o mouse diretamente sobre o número
+`[pontuação]` mostra a composição do valor (prioridade, urgência, SLA,
+eventual piso e teto); o restante da linha não abre esse tooltip. Clicar num
+ticket abre um painel de detalhes (Time to resolution,
 Plataforma, Empresa, Relator, Responsável, Tipo de solicitação) ANEXADO à
 janela principal (clicar em outro ticket fecha o anterior e abre um novo, na
 hora), com ações rápidas (Abrir, 🔗 Copiar link, Copiar código, ⟳ Atualizar,
