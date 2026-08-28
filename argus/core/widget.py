@@ -461,6 +461,50 @@ class _ChipCategoria(_AreaComHover):
                 pintor.drawEllipse(QPointF(centro_badge), raio, raio)
 
 
+# 🔥 Cor do TÍTULO por SLA (2026-08-28, pedido do usuário: "faz a cor da
+# fonte ser com base na SLA, coloca vermelho p as estouradas, laranja
+# faltando 1h, amarelo 2h") - reaproveita os MESMOS tons já usados pra
+# prioridade (`CORES_PRIORIDADE`) em vez de inventar uma 2ª paleta de
+# vermelho/laranja/amarelo. Só afeta `resumo` (o título) - a cor de
+# `prefixo` (chave do ticket) continua exclusivamente pela prioridade,
+# decisão anterior mantida (ver comentário logo abaixo, "cor por
+# prioridade").
+COR_SLA_ESTOURADO = CORES_PRIORIDADE["Highest"]
+COR_SLA_LIMIAR_1H = CORES_PRIORIDADE["High"]
+COR_SLA_LIMIAR_2H = CORES_PRIORIDADE["Medium"]
+LIMIAR_SLA_LARANJA_HORAS = 1
+LIMIAR_SLA_AMARELO_HORAS = 2
+
+
+def _cor_titulo_por_sla(ticket, cor_padrao: str) -> str:
+    if ticket.sla_estourado:
+        return COR_SLA_ESTOURADO
+    millis = ticket.sla_restante_millis
+    if millis is None:
+        return cor_padrao
+    horas_restantes = millis / 3_600_000
+    if horas_restantes < LIMIAR_SLA_LARANJA_HORAS:
+        return COR_SLA_LIMIAR_1H
+    if horas_restantes < LIMIAR_SLA_AMARELO_HORAS:
+        return COR_SLA_LIMIAR_2H
+    return cor_padrao
+
+
+def _sufixo_sla(ticket) -> str:
+    """Concatenado no final do título (pedido do usuário: "pode ate
+    concatenar no final do titulo o time to resolution, mas apenas horas,
+    ignore minutos") - só HORAS inteiras, nunca minutos (o Jira já expõe
+    isso formatado com minutos em `sla_texto`/tooltip do painel de
+    detalhes; aqui é um resumo mais compacto pra caber na linha da lista)."""
+    millis = ticket.sla_restante_millis
+    if millis is None:
+        return ""
+    horas = abs(millis) // 3_600_000
+    if ticket.sla_estourado:
+        return f" · SLA estourado há {horas}h" if horas else " · SLA estourado agora"
+    return f" · SLA em {horas}h"
+
+
 class _LinhaTicket(QWidget):
     """Uma linha de ticket na lista - campo INTEIRO clicável, com destaque
     sutil ao passar o mouse. Clique abre o painel de detalhes (2026-08-15,
@@ -522,9 +566,14 @@ class _LinhaTicket(QWidget):
         prefixo.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout_linha.addWidget(prefixo)
 
+        # 🔥 Cor do título por SLA (2026-08-28) - supera a cor "novo/lido"
+        # de sempre (`cor_texto`) quando o SLA estiver estourado ou perto
+        # (ver `_cor_titulo_por_sla`); sem SLA aplicável, mantém o
+        # comportamento de sempre.
+        cor_resumo = _cor_titulo_por_sla(ticket, cor_texto)
         resumo = QLabel(resumo_elidido)
         resumo.setFont(fonte)
-        resumo.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
+        resumo.setStyleSheet(f"color: {cor_resumo}; background: transparent; border: none;")
         resumo.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout_linha.addWidget(resumo, 1)
 
@@ -1964,7 +2013,10 @@ class ArgusWidget(QWidget):
         prefixo_plano = f"[{ticket.pontuacao_foco}] {ticket.chave}  "
         metricas = QFontMetrics(fonte)
         largura_resumo = max(0, largura_disponivel - 30 - metricas.horizontalAdvance(prefixo_plano))
-        resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}", Qt.ElideRight, largura_resumo)
+        # 🔥 Sufixo de SLA (2026-08-28) - entra na MESMA string que já elide
+        # (como o "● NOVO" de sempre), então some primeiro se a linha for
+        # curta demais pra caber tudo - mesma prioridade visual do resto.
+        resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}{_sufixo_sla(ticket)}", Qt.ElideRight, largura_resumo)
         linha = _LinhaTicket(ticket, resumo_elidido, fonte, self._ticket_clicado)
         linha.definir_selecionado(self._ticket_esta_aberto(ticket.chave))
         return linha

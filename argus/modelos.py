@@ -53,6 +53,13 @@ class Ticket:
     tipo_solicitacao: str = ""
     sla_texto: str = ""
     sla_estourado: bool = False
+    # 🔥 Millis restantes (negativo = quanto já estourou), 2026-08-28 - até
+    # aqui só existia `sla_texto` (string pronta do Jira, ex.: "5h 4m",
+    # ignora horário comercial de propósito) e `sla_estourado` (binário).
+    # Faltava um número pra decidir COR por faixa (vermelho/laranja/amarelo,
+    # ver `core/widget.py::_LinhaTicket`) - `sla_texto` não dá pra comparar
+    # contra limiar de forma confiável (formato livre do Jira).
+    sla_restante_millis: int | None = None
 
 
 @dataclass

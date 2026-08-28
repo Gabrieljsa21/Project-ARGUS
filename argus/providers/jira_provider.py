@@ -424,6 +424,7 @@ class JiraProvider(NotificacaoProvider):
                         "detalhe": self._extrair_campos_detalhe(campos),
                         "sla_texto": (sla_info or {}).get("restante_texto", ""),
                         "sla_estourado": bool(sla_info and sla_info.get("breached")),
+                        "sla_restante_millis": (sla_info or {}).get("restante_millis") if sla_info else None,
                     })
                 except requests.RequestException as e:
                     print(f"[Argus] Falha ao processar o chamado {chave_ticket} (ignorado neste ciclo): {e}")
@@ -458,6 +459,7 @@ class JiraProvider(NotificacaoProvider):
                     urgencia_no_texto=tb["urgencia_no_texto"],
                     sla_texto=tb["sla_texto"],
                     sla_estourado=tb["sla_estourado"],
+                    sla_restante_millis=tb["sla_restante_millis"],
                     **tb["detalhe"],
                 ))
             # 🔥 Ordena por pontuação de foco (2026-08-15, pedido do usuário: "pra

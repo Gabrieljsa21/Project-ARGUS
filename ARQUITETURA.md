@@ -54,6 +54,37 @@ O usuário confirmou que esse tipo de vínculo é sempre o mesmo (a automação 
 Cada issue carrega um campo de SLA nativo do Jira Service Management (no schema atual da instância, `customfield_10100` = "Time to resolution") com `ongoingCycle.remainingTime` (`.millis` e `.friendly`, ex.: "5h 4m"), `breachTime` e `breached` (booleano). Buscado via `/rest/servicedeskapi/request/{chave}/sla` (`JiraProvider._obter_sla_info`) — usado pra:
 - **Pontuação de foco** (ver seção própria abaixo) — SLA estourado escala por hora real de atraso.
 - **Painel de detalhes** — mostra o texto pronto (`remainingTime.friendly`) como "Time to resolution".
+- **Cor do título na lista** (2026-08-28, ver seção "Cor do título por SLA" abaixo).
+
+### Cor do título por SLA (2026-08-28)
+
+Pedido do usuário: "faz a cor da fonte ser com base na SLA, coloca vermelho
+p as estouradas, laranja faltando 1h, amarelo 2h". Diferente da cor do
+CÓDIGO do ticket (`prefixo`, exclusivamente por prioridade - decisão
+anterior, não mexida aqui), agora o **título/resumo** (`resumo`, `core/
+widget.py::_LinhaTicket`) muda de cor por faixa de urgência de SLA:
+
+| Condição | Cor |
+|---|---|
+| `sla_estourado` (qualquer tempo de atraso) | Vermelho (`CORES_PRIORIDADE["Highest"]`) |
+| Restante < 1h | Laranja (`CORES_PRIORIDADE["High"]`) |
+| Restante < 2h | Amarelo (`CORES_PRIORIDADE["Medium"]`) |
+| Sem SLA aplicável, ou ≥ 2h restantes | Cor normal de sempre (novo/lido) |
+
+Reaproveita as MESMAS 3 cores já usadas pra prioridade (`tema.
+CORES_PRIORIDADE`) em vez de uma paleta nova - o vermelho/laranja/amarelo
+já é um vocabulário visual estabelecido no app. `Ticket.sla_texto`
+(string pronta do Jira, ex.: "5h 4m") não dá pra comparar contra um
+limiar de forma confiável (formato livre) - `modelos.Ticket` ganhou
+`sla_restante_millis` (o número bruto, já existia dentro de `_obter_sla_
+info` mas não chegava até o Ticket) especificamente pra isso.
+
+Título também ganhou um sufixo compacto com o tempo restante, só em HORAS
+inteiras (pedido do usuário: "concatenar no final do titulo o time to
+resolution, mas apenas horas, ignore minutos") - ex.: " · SLA em 3h" /
+" · SLA estourado há 5h". Entra na MESMA string que já elide (junto do
+"● NOVO" de sempre, `core/widget.py::ArgusWidget._linha_ticket`), então
+some primeiro se a linha for curta demais.
 
 ## Regra de "novidade"
 
