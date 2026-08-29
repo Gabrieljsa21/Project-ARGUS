@@ -491,18 +491,19 @@ def _cor_titulo_por_sla(ticket, cor_padrao: str) -> str:
 
 
 def _sufixo_sla(ticket) -> str:
-    """Concatenado no final do título (pedido do usuário: "pode ate
-    concatenar no final do titulo o time to resolution, mas apenas horas,
-    ignore minutos") - só HORAS inteiras, nunca minutos (o Jira já expõe
-    isso formatado com minutos em `sla_texto`/tooltip do painel de
-    detalhes; aqui é um resumo mais compacto pra caber na linha da lista)."""
+    """Concatenado no final do título - só HORAS inteiras, nunca minutos
+    (pedido do usuário: "pode ate concatenar no final do titulo o time to
+    resolution, mas apenas horas, ignore minutos"). Formato bem compacto
+    (2026-08-28, correção depois do usuário achar a 1ª versão grande demais:
+    "n era p ter um sufixo tao grande, apenas (2h) ou (-4h)") - só o número
+    entre parênteses, sinal negativo já comunica "estourado há", sem texto
+    extra. `int()` trunca em direção a ZERO (não `//`, que arredonda pra
+    baixo/mais negativo) - "-4h30m estourado" vira "(-4h)", não "(-5h)"."""
     millis = ticket.sla_restante_millis
     if millis is None:
         return ""
-    horas = abs(millis) // 3_600_000
-    if ticket.sla_estourado:
-        return f" · SLA estourado há {horas}h" if horas else " · SLA estourado agora"
-    return f" · SLA em {horas}h"
+    horas = int(millis / 3_600_000)
+    return f" ({horas}h)"
 
 
 class _LinhaTicket(QWidget):
