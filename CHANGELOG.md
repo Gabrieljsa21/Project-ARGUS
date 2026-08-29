@@ -8,9 +8,11 @@ Versionamento: [Semantic Versioning](VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-28: Tooltip de pontuação de foco + cor do título por SLA
+
 ### Novidades
 - Passar o mouse somente sobre o número `[pontuação]` de um ticket agora mostra como a pontuação de foco foi calculada: base da prioridade do Jira, bônus de urgência textual, bônus de SLA, eventual piso por urgência e teto de 100. O restante da linha continua sem tooltip.
-- **Título do ticket na lista muda de cor por SLA** - vermelho se estourado, laranja faltando menos de 1h, amarelo faltando menos de 2h. Ganhou também um sufixo compacto com o tempo restante em horas inteiras (ex.: "· SLA em 3h"). Ver `ARQUITETURA.md`.
+- **Título do ticket na lista muda de cor por SLA** - vermelho se estourado, laranja faltando menos de 1h, amarelo faltando menos de 2h. Ganhou também um sufixo compacto com o tempo restante em horas inteiras, `(2h)` restando ou `(-4h)` estourado. Ver `ARQUITETURA.md`.
 
 ### Correções
 - **Tooltips com fundo preto padrão do Qt, fora da paleta do Argus** - nenhum `QToolTip` tinha estilo próprio (pontuação, "Arrastar", botões de ícone, código do ticket). Corrigido com uma regra `QToolTip` global em `aplicar_estilo_global` (`core/tema.py`), cobrindo todos de uma vez.

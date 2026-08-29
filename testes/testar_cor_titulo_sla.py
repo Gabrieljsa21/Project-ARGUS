@@ -63,18 +63,25 @@ class SufixoSlaTest(unittest.TestCase):
     def test_sem_sla_nao_gera_sufixo(self):
         self.assertEqual("", _sufixo_sla(_ticket()))
 
-    def test_ignora_minutos_arredondando_pra_baixo(self):
-        # 3h59m -> "3h", nunca "4h" nem "3h59m"
+    def test_ignora_minutos_truncando_em_direcao_a_zero(self):
+        # 3h59m -> "(3h)", nunca "(4h)" nem "(3h59m)"
         millis = 3 * 3_600_000 + 59 * 60_000
-        self.assertEqual(" · SLA em 3h", _sufixo_sla(_ticket(sla_restante_millis=millis)))
+        self.assertEqual(" (3h)", _sufixo_sla(_ticket(sla_restante_millis=millis)))
 
-    def test_estourado_mostra_horas_de_atraso_em_valor_absoluto(self):
+    def test_estourado_mostra_horas_negativas(self):
         sufixo = _sufixo_sla(_ticket(sla_estourado=True, sla_restante_millis=-5 * 3_600_000))
-        self.assertEqual(" · SLA estourado há 5h", sufixo)
+        self.assertEqual(" (-5h)", sufixo)
 
-    def test_estourado_ha_menos_de_1h_nao_mostra_0h(self):
+    def test_estourado_trunca_em_direcao_a_zero_nao_pra_baixo(self):
+        # -4h30m estourado -> "(-4h)", NUNCA "(-5h)" (`int()` trunca rumo a
+        # zero; `//` arredondaria pra baixo/mais negativo - o bug que essa
+        # regra existe pra evitar).
+        millis = -(4 * 3_600_000 + 30 * 60_000)
+        self.assertEqual(" (-4h)", _sufixo_sla(_ticket(sla_estourado=True, sla_restante_millis=millis)))
+
+    def test_estourado_ha_menos_de_1h_mostra_0h(self):
         sufixo = _sufixo_sla(_ticket(sla_estourado=True, sla_restante_millis=-10 * 60_000))
-        self.assertEqual(" · SLA estourado agora", sufixo)
+        self.assertEqual(" (0h)", sufixo)
 
 
 class ResumoNaLinhaTicketTest(unittest.TestCase):

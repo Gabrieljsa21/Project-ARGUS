@@ -79,12 +79,17 @@ limiar de forma confiável (formato livre) - `modelos.Ticket` ganhou
 `sla_restante_millis` (o número bruto, já existia dentro de `_obter_sla_
 info` mas não chegava até o Ticket) especificamente pra isso.
 
-Título também ganhou um sufixo compacto com o tempo restante, só em HORAS
-inteiras (pedido do usuário: "concatenar no final do titulo o time to
-resolution, mas apenas horas, ignore minutos") - ex.: " · SLA em 3h" /
-" · SLA estourado há 5h". Entra na MESMA string que já elide (junto do
-"● NOVO" de sempre, `core/widget.py::ArgusWidget._linha_ticket`), então
-some primeiro se a linha for curta demais.
+Título também ganhou um sufixo com o tempo restante, só em HORAS inteiras
+(pedido do usuário: "concatenar no final do titulo o time to resolution,
+mas apenas horas, ignore minutos"). Bem compacto de propósito (correção
+2026-08-28, depois de uma 1ª versão mais verbosa: "n era p ter um sufixo
+tao grande, apenas (2h) ou (-4h)") - só o número entre parênteses, `(2h)`
+restando ou `(-4h)` estourado (sinal negativo já comunica "estourado há",
+sem precisar de texto extra). `int()` trunca em direção a ZERO, não pra
+baixo (`//`) - "-4h30m estourado" vira `(-4h)`, não `(-5h)`. Entra na MESMA
+string que já elide (junto do "● NOVO" de sempre, `core/widget.py::
+ArgusWidget._linha_ticket`), então some primeiro se a linha for curta
+demais.
 
 ## Regra de "novidade"
 
