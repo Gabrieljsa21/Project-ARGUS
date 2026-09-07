@@ -1,5 +1,5 @@
 """Validação manual do painel de detalhes anexado/destacado (2026-08-15, ver
-argus_painel_detalhes_ticket.md e ARQUITETURA.md) - sobe a janela com um
+argus_painel_detalhes_ticket.md e docs/ARQUITETURA.md) - sobe a janela com um
 provider FALSO e exercita: abrir no anexado, trocar pra outro ticket (fecha
 o painel anterior e abre um novo, sem crossfade - ver correção 2026-08-16 em
 `_ticket_clicado`), nunca abrir 2 instâncias do mesmo ticket, destacar/

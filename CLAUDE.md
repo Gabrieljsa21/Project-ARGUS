@@ -1,22 +1,24 @@
 # Argus
 
 Widget desktop de notificação de chamados do Jira (Nordware Service Desk).
-Projeto IRMÃO da GAIA (`Project-GAIA`/`assistant`), mas repositório separado —
+Projeto IRMÃO da GAIA (`Project-GAIA`/`assistant`), mas repositório separado -
 usável sozinho por colegas da Nordware que não querem a GAIA inteira, e
 consumido pela GAIA como dependência (`pip install git+...`).
 
-Arquitetura completa, decisões de design e estado atual: ver `ARQUITETURA.md`
-(sempre a fonte da verdade — este arquivo não repete detalhe técnico).
+Arquitetura completa, decisões de design e estado atual: ver `docs/ARQUITETURA.md`
+(sempre a fonte da verdade - este arquivo não repete detalhe técnico).
 
-## Documentação — atualizar na hora, nunca acumular
+## Documentação - atualizar na hora, nunca acumular
 
 Toda mudança de comportamento enviada ao git (commit/PR) atualiza a
-documentação correspondente NO MESMO commit/PR — nunca fica pra depois:
+documentação correspondente NO MESMO commit/PR - nunca fica pra depois:
 
-- `ARQUITETURA.md` — qualquer decisão técnica nova ou correção de algo que o
+- `docs/ARQUITETURA.md` - qualquer decisão técnica nova ou correção de algo que o
   documento descrevia errado/desatualizado.
-- `README.md` — se mudar como usar/configurar o projeto.
-- `CHANGELOG.md` — resumo de alto nível sob `[Unreleased]`.
+- `README.md` - se mudar como usar/configurar o projeto.
+- `CHANGELOG.md` - resumo de alto nível sob `[Unreleased]`.
+- `docs/TODO.md` - remover item quando implementado (nunca só marcar); item novo
+  precisa vir com Prioridade/Complexidade/Status preenchidos.
 
 ## Git: sempre via Pull Request
 

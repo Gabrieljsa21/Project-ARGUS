@@ -29,7 +29,7 @@ class Ticket:
     atualizado_em: str
     novo: bool = False
     # 🔥 Tipo do evento que tornou o ticket "novo" (2026-08-15, pra fala da
-    # GAIA por voz - ver ARQUITETURA.md) - "novo"/"critico"/"status_mudou"/
+    # GAIA por voz - ver docs/ARQUITETURA.md) - "novo"/"critico"/"status_mudou"/
     # "prioridade_mudou"/"atribuido"/"comentario", ou None se `novo=False`.
     # O core/ (janela) não usa isso pra nada hoje - só existe pra quem
     # consome o provider precisar de mais contexto que um bool.
