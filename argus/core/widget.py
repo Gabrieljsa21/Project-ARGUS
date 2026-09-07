@@ -1,5 +1,5 @@
 """Janela principal do Argus - sempre no topo, transparente, sem borda,
-arrastável (ver ARQUITETURA.md, seção "Janela"). Não sabe o que é Jira - só
+arrastável (ver docs/ARQUITETURA.md, seção "Janela"). Não sabe o que é Jira - só
 fala com `NotificacaoProvider`/`Persistencia`.
 
 🔥 Redesenho (2026-08-14, pedido do usuário depois de ver a v1 rodando: "ficou
@@ -334,7 +334,7 @@ class _ChipCategoria(_AreaComHover):
         bolinha = QLabel("●")
         bolinha.setStyleSheet(f"color: {cor_bolinha}; background: transparent; border: none; font-size: 9px;")
         # 🔥 Correção (2026-08-24, mesma pegadinha do Qt já corrigida em
-        # `_LinhaTicket` - ver ARQUITETURA.md "Campo INTEIRO clicável de
+        # `_LinhaTicket` - ver docs/ARQUITETURA.md "Campo INTEIRO clicável de
         # verdade") - sem isso, passar o mouse/clicar em cima da bolinha ou
         # do nome engole o evento antes de chegar no chip, e só o vão vazio
         # (ou a borda) responde de forma confiável.
@@ -604,7 +604,7 @@ class _LinhaTicket(QWidget):
 
     def _atualizar_estilo(self):
         destacar = self._hover or self._selecionado
-        # 🔥 Correção (2026-08-23, ver ARQUITETURA.md "Causa raiz real do
+        # 🔥 Correção (2026-08-23, ver docs/ARQUITETURA.md "Causa raiz real do
         # clique/hover fora do texto") - `background-color: transparent` é
         # alpha ZERO de verdade, e numa janela `WA_TranslucentBackground`/
         # Acrylic como a do Argus, o Windows trata isso como CLIQUE-ATRAVÉS
@@ -2105,7 +2105,7 @@ class ArgusWidget(QWidget):
 
         🔥 Marca visto AQUI (2026-08-21, mesmo pedido) - abrir o ticket no
         painel (o "campo" da lista) já limpa a novidade dele, sem precisar
-        clicar em "Abrir" no Jira pra isso (ver ARQUITETURA.md, "regra de
+        clicar em "Abrir" no Jira pra isso (ver docs/ARQUITETURA.md, "regra de
         novidade": "só abrir o ticket individual... limpa a novidade").
         Muda só o objeto Ticket em memória (`self._categorias` guarda a
         MESMA referência) + reconstrói a barra - sem `atualizar()` completo

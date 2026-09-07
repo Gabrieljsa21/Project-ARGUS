@@ -1,9 +1,9 @@
 """Fonte de notificação real - Jira Cloud REST API v3, Basic Auth (e-mail +
 API token, não senha). Cobre só o fluxo de atendimento (assignee = você mesmo),
-nos 4 status decididos em ARQUITETURA.md - "Em Revisão", "Aguardando
+nos 4 status decididos em docs/ARQUITETURA.md - "Em Revisão", "Aguardando
 atendimento", "Aguardando cliente" e "Aguardando desenvolvimento".
 
-Heurística de novidade (validada com o usuário, ver ARQUITETURA.md): conta como
+Heurística de novidade (validada com o usuário, ver docs/ARQUITETURA.md): conta como
 novo desde a última vez que o ticket foi ABERTO (não desde a última checagem) -
 mudança de status, de prioridade, de responsável, ou comentário de alguém que
 não seja o próprio usuário nem uma conta de automação. Comentário automático do
@@ -324,7 +324,7 @@ class JiraProvider(NotificacaoProvider):
         """Devolve (novo: bool, tipo: str | None) - o tipo classifica o
         motivo mais relevante da novidade (usado pela fala da GAIA por voz,
         que menciona código+status+urgência, nunca o resumo do ticket - ver
-        ARQUITETURA.md). Ordem de checagem = ordem de importância: ticket
+        docs/ARQUITETURA.md). Ordem de checagem = ordem de importância: ticket
         nunca visto > virou crítico > mudou de status > mudou de prioridade
         (não-crítica) > reatribuído > comentário de terceiro.
 

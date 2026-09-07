@@ -1,8 +1,8 @@
-# Argus — arquitetura consolidada
+# Argus - arquitetura consolidada
 
-Widget desktop de notificação de chamados do Jira. Nasceu de uma ideia de notificação visual da GAIA, mas é desenhado desde o início como **projeto separado**, com repo próprio no GitHub pessoal do usuário — usável sozinho por colegas da Nordware que não querem a GAIA inteira (voz, Discord, LLM), e integrável dentro da GAIA como um módulo a mais.
+Widget desktop de notificação de chamados do Jira. Nasceu de uma ideia de notificação visual da GAIA, mas é desenhado desde o início como **projeto separado**, com repo próprio no GitHub pessoal do usuário - usável sozinho por colegas da Nordware que não querem a GAIA inteira (voz, Discord, LLM), e integrável dentro da GAIA como um módulo a mais.
 
-Este documento consolida as decisões tomadas em uma sessão de design (2026-08-14), antes de qualquer linha de código escrita. Não substitui julgamento durante a implementação — decisões pequenas (intervalo exato de polling, cores, nomes de variável) ficam para a hora de codar.
+Este documento consolida as decisões tomadas em uma sessão de design (2026-08-14), antes de qualquer linha de código escrita. Não substitui julgamento durante a implementação - decisões pequenas (intervalo exato de polling, cores, nomes de variável) ficam para a hora de codar.
 
 ## Estado atual (2026-08-15)
 
@@ -14,12 +14,12 @@ depois. Ver `README.md` pro resumo rápido de uso.
 
 ## Objetivo
 
-Substituir a notificação de e-mail crua do Jira (assunto + corpo cheio de rodapé da Atlassian) por um widget sempre visível no desktop, que mostra, por status de atendimento, o que precisa da atenção do usuário — sem depender do avatar Live2D/VTube Studio, que é um sistema totalmente separado.
+Substituir a notificação de e-mail crua do Jira (assunto + corpo cheio de rodapé da Atlassian) por um widget sempre visível no desktop, que mostra, por status de atendimento, o que precisa da atenção do usuário - sem depender do avatar Live2D/VTube Studio, que é um sistema totalmente separado.
 
 ## Escopo
 
-- **Só Jira.** Não cobre e-mail, Documentos, Pagamentos, Pulse, Reuniões (essas ficam com a GAIA, se um dia existirem — fora deste projeto).
-- **Só chamados atribuídos ao usuário** (`assignee = currentUser()`). Chamados de melhoria onde o usuário é só reporter/watcher (encaminhados ao Time de Produtos) ficam de fora — não são responsabilidade dele.
+- **Só Jira.** Não cobre e-mail, Documentos, Pagamentos, Pulse, Reuniões (essas ficam com a GAIA, se um dia existirem - fora deste projeto).
+- **Só chamados atribuídos ao usuário** (`assignee = currentUser()`). Chamados de melhoria onde o usuário é só reporter/watcher (encaminhados ao Time de Produtos) ficam de fora - não são responsabilidade dele.
 - **Público:** colegas da Nordware que usam a mesma instância Jira (`nordwareservices.atlassian.net`), sem querer a GAIA completa.
 
 ## Fluxo de status rastreado
@@ -34,7 +34,7 @@ Baseado no fluxo real do Jira (Nordware Service Desk, projeto NSD), validado ao 
 | Aguardando desenvolvimento | Sim |
 | Em Andamento | Não (não usado atualmente pelo usuário) |
 | Aguardando Terceiros | Não (não usado atualmente) |
-| Resolvido | Não (terminal — ticket resolvido não pede ação, some da contagem) |
+| Resolvido | Não (terminal - ticket resolvido não pede ação, some da contagem) |
 
 JQL base: `assignee = currentUser() AND status in ("Em Revisão", "Aguardando atendimento", "Aguardando cliente", "Aguardando desenvolvimento")`.
 
@@ -47,13 +47,13 @@ Consequência pra arquitetura: a categoria "Dev" precisa de **polling em 2 etapa
 2. Para cada um, ler `issuelinks`, filtrar por `type.name == "Problem/Incident"`, pegar o issue vinculado (`inwardIssue`/`outwardIssue`, dependendo da direção).
 3. Checar novidade (comentário, mudança de status) **no ticket vinculado**, não no ticket NSD.
 
-O usuário confirmou que esse tipo de vínculo é sempre o mesmo (a automação nunca varia) — não precisa de lógica adicional para detectar variações.
+O usuário confirmou que esse tipo de vínculo é sempre o mesmo (a automação nunca varia) - não precisa de lógica adicional para detectar variações.
 
-### SLA — implementado, alimenta a pontuação de foco e o painel de detalhes
+### SLA - implementado, alimenta a pontuação de foco e o painel de detalhes
 
-Cada issue carrega um campo de SLA nativo do Jira Service Management (no schema atual da instância, `customfield_10100` = "Time to resolution") com `ongoingCycle.remainingTime` (`.millis` e `.friendly`, ex.: "5h 4m"), `breachTime` e `breached` (booleano). Buscado via `/rest/servicedeskapi/request/{chave}/sla` (`JiraProvider._obter_sla_info`) — usado pra:
-- **Pontuação de foco** (ver seção própria abaixo) — SLA estourado escala por hora real de atraso.
-- **Painel de detalhes** — mostra o texto pronto (`remainingTime.friendly`) como "Time to resolution".
+Cada issue carrega um campo de SLA nativo do Jira Service Management (no schema atual da instância, `customfield_10100` = "Time to resolution") com `ongoingCycle.remainingTime` (`.millis` e `.friendly`, ex.: "5h 4m"), `breachTime` e `breached` (booleano). Buscado via `/rest/servicedeskapi/request/{chave}/sla` (`JiraProvider._obter_sla_info`) - usado pra:
+- **Pontuação de foco** (ver seção própria abaixo) - SLA estourado escala por hora real de atraso.
+- **Painel de detalhes** - mostra o texto pronto (`remainingTime.friendly`) como "Time to resolution".
 - **Cor do título na lista** (2026-08-28, ver seção "Cor do título por SLA" abaixo).
 
 ### Cor do título por SLA (2026-08-28)
@@ -105,19 +105,19 @@ Um ticket entra no contador de **novidades** de uma categoria quando, desde a ú
 | Comentário automático do Jira ("Automation for Jira", avisos de SLA etc.) | Não |
 | Polling rodou e nada mudou | Não |
 
-**O que limpa a novidade:** só abrir o ticket individual (drill-down até o card dele). Abrir a lista da categoria (ver todos os tickets daquele status) **não limpa nada sozinho** — o usuário pode ter 15 tickets ali e não ter lido todos.
+**O que limpa a novidade:** só abrir o ticket individual (drill-down até o card dele). Abrir a lista da categoria (ver todos os tickets daquele status) **não limpa nada sozinho** - o usuário pode ter 15 tickets ali e não ter lido todos.
 
-Implementação: exige um registro persistido por ticket (chave → timestamp/versão da última vez visto), comparado contra o estado atual do ticket a cada polling — mesmo padrão que `gmail_ultimo_id_visto` já usa na GAIA, adaptado pra granularidade de ticket em vez de e-mail. Precisa de rotina de limpeza (tickets resolvidos há N dias saem do registro).
+Implementação: exige um registro persistido por ticket (chave → timestamp/versão da última vez visto), comparado contra o estado atual do ticket a cada polling - mesmo padrão que `gmail_ultimo_id_visto` já usa na GAIA, adaptado pra granularidade de ticket em vez de e-mail. Precisa de rotina de limpeza (tickets resolvidos há N dias saem do registro).
 
 ### Exceção: status mudado pelo próprio usuário (2026-08-21)
 
-Pedido do usuário: "quando a mudança for apenas de status realizada por mim, não precisa notificar como novo, apenas atualizar o ticket para a coluna nova" — mudar o status de um chamado ele mesmo (pelo Jira direto) não é "novidade" pra ele mesmo revisar depois; o ticket só precisa refletir a coluna/categoria nova, sem badge "NOVO" nem aviso de voz.
+Pedido do usuário: "quando a mudança for apenas de status realizada por mim, não precisa notificar como novo, apenas atualizar o ticket para a coluna nova" - mudar o status de um chamado ele mesmo (pelo Jira direto) não é "novidade" pra ele mesmo revisar depois; o ticket só precisa refletir a coluna/categoria nova, sem badge "NOVO" nem aviso de voz.
 
-`JiraProvider._classificar_evento` só sabe COMPARAR status (antigo vs. atual) — pra saber QUEM mudou, `_autor_ultima_mudanca_status` busca o changelog do issue (`GET /rest/api/3/issue/{chave}?expand=changelog`, percorrido de trás pra frente até achar o item mais recente com `field == "status"`) e compara o `accountId` do autor contra `self._minha_account_id`. Só chamado quando o status REALMENTE mudou desde o último `visto` (evento raro) — não pesa no polling normal, diferente do SLA/pontuação de foco que rodam pra todo ticket a cada ciclo.
+`JiraProvider._classificar_evento` só sabe COMPARAR status (antigo vs. atual) - pra saber QUEM mudou, `_autor_ultima_mudanca_status` busca o changelog do issue (`GET /rest/api/3/issue/{chave}?expand=changelog`, percorrido de trás pra frente até achar o item mais recente com `field == "status"`) e compara o `accountId` do autor contra `self._minha_account_id`. Só chamado quando o status REALMENTE mudou desde o último `visto` (evento raro) - não pesa no polling normal, diferente do SLA/pontuação de foco que rodam pra todo ticket a cada ciclo.
 
-Pro vínculo de 2 saltos ("Aguardando desenvolvimento"), o changelog é consultado no MESMO issue usado pra novidade (o ticket vinculado de dev, não o NSD original) — por isso `_estado_atual` agora guarda também a `chave` do issue que gerou aquele estado, não só os campos comparados.
+Pro vínculo de 2 saltos ("Aguardando desenvolvimento"), o changelog é consultado no MESMO issue usado pra novidade (o ticket vinculado de dev, não o NSD original) - por isso `_estado_atual` agora guarda também a `chave` do issue que gerou aquele estado, não só os campos comparados.
 
-A checagem de autor só suprime o tipo de evento `"status_mudou"` — se a MESMA atualização também trouxe outro evento (prioridade crítica, reatribuição, comentário de terceiro), esse outro evento ainda conta como novidade normalmente.
+A checagem de autor só suprime o tipo de evento `"status_mudou"` - se a MESMA atualização também trouxe outro evento (prioridade crítica, reatribuição, comentário de terceiro), esse outro evento ainda conta como novidade normalmente.
 
 ## Pontuação de foco (implementado, 2026-08-15)
 
@@ -577,28 +577,28 @@ essa separação, isso dobrava as requisições ao Jira por checagem.
 
 ## Modelo de interação da UI
 
-Não é uma pilha de widgets (uma bolha por categoria) — é **um widget só**, com uma barra de contadores por categoria embaixo da personagem (opcional, ver abaixo).
+A interface usa **um widget só**, com todas as categorias, com uma barra de contadores por categoria embaixo da personagem (opcional, ver abaixo).
 
 - **Dois modos de contagem**, alternados clicando na personagem (sem arrastar):
-  - **Novidades** — conta só o que mudou desde a última vez visto, por categoria. Categoria sem novidade nenhuma **some da barra** (não aparece com "0").
-  - **Total** — conta quantos tickets existem agora em cada status, independente de novidade. Categoria com total zero também some.
-  - Categorias com pelo menos uma novidade ganham um `*` — em **ambos** os modos, não só no de novidades (trocar pra "total" não esconde que tem algo novo esperando).
-- **Clicar num número/categoria específico** (não na personagem) abre a lista de tickets daquela categoria — mostrando o "novo" com marcação visual e o resto sem.
+  - **Novidades** - conta só o que mudou desde a última vez visto, por categoria. Categoria sem novidade nenhuma **some da barra** (não aparece com "0").
+  - **Total** - conta quantos tickets existem agora em cada status, independente de novidade. Categoria com total zero também some.
+  - Categorias com pelo menos uma novidade ganham um `*` - em **ambos** os modos, não só no de novidades (trocar pra "total" não esconde que tem algo novo esperando).
+- **Clicar num número/categoria específico** (não na personagem) abre a lista de tickets daquela categoria - mostrando o "novo" com marcação visual e o resto sem.
 - **Clicar num ticket da lista** abre o card com detalhes (código, título, prioridade, tempo aguardando, link "Abrir no Jira") e é o que **limpa** a novidade daquele ticket.
-- Navegação entre níveis (barra → lista de categoria → detalhe do ticket) é navegação de CONTEÚDO dentro do mesmo card/janela expandida (com "voltar"), não uma nova animação de crescimento a cada nível — só compacto ⇄ expandido anima geometria.
+- Navegação entre níveis (barra → lista de categoria → detalhe do ticket) é navegação de CONTEÚDO dentro do mesmo card/janela expandida (com "voltar"), não uma nova animação de crescimento a cada nível - só compacto ⇄ expandido anima geometria.
 
 ## Janela (comportamento de desktop)
 
-Réplica das regras de janela que o modelo 2D do VTube Studio já tem — **exceto zoom/redimensionar**, dispensado explicitamente:
+Réplica das regras de janela que o modelo 2D do VTube Studio já tem - **exceto zoom/redimensionar**, dispensado explicitamente:
 
 - Transparência real (alpha), não chroma-key.
 - Sempre no topo de todas as janelas.
 - Sem borda, sem entrada na barra de tarefas/Alt-Tab.
-- Clique-através nas áreas transparentes — só a silhueta visível (personagem + barra) é clicável, via máscara de alpha (`setMask`).
-- **Arrastável** — clicar e mover reposiciona o widget. Precisa diferenciar clique (toggle novidades/total) de arraste (reposicionar) por um limiar pequeno de movimento entre mouse-down e mouse-up.
+- Clique-através nas áreas transparentes - só a silhueta visível (personagem + barra) é clicável, via máscara de alpha (`setMask`).
+- **Arrastável** - clicar e mover reposiciona o widget. Precisa diferenciar clique (toggle novidades/total) de arraste (reposicionar) por um limiar pequeno de movimento entre mouse-down e mouse-up.
 - **Posição persiste** entre reinícios (salva em config, não reseta pro padrão a cada abertura).
 
-## Personagem/ícone — opcional e decorativo (implementado como ÍCONE ESTÁTICO, não animação)
+## Personagem/ícone - opcional e decorativo (implementado como ÍCONE ESTÁTICO, não animação)
 
 `_Alavanca` (placeholder original) hoje desenha o ícone oficial do Argus (pavão
 de cristal, `assets/icone_argus.png`) - clique alterna novidades/total,
@@ -613,29 +613,29 @@ decorativo/opcional - o MVP funciona 100% só com a barra de contadores.
 ```
 argus/
 ├── core/                  # janela, estado (novidades/total/lista/detalhe), drag/transparência/
-│                          # click-through, animação opcional — não sabe o que é Jira
+│                          # click-through, animação opcional - não sabe o que é Jira
 ├── providers/
 │   └── jira_provider.py  # implementa NotificacaoProvider usando a JQL/issuelinks validados
 ├── persistencia.py        # interface abstrata p/ "visto" por ticket + posição da janela
-└── app.py                 # entrypoint standalone — própria QApplication, config via .env
+└── app.py                 # entrypoint standalone - própria QApplication, config via .env
 ```
 
 Dois contratos garantem que funciona sozinho E dentro da GAIA:
 
-- **`NotificacaoProvider`** — contrato mínimo (`providers/base.py`): `listar_categorias()` (devolve `list[Categoria]` já com `novo` calculado) e `marcar_visto(chave_ticket)`. O `core/` só fala com essa interface. `JiraProvider` expõe métodos EXTRA (`buscar_dados_brutos()`/`classificar()`/`obter_detalhes_completos()`, ver seções abaixo) que não fazem parte do contrato — opcionais, checados via `getattr` por quem consome (ex.: `ArgusWidget`), pra um provider mínimo (ou uma fonte diferente de Jira) continuar funcionando sem eles.
-- **`Persistencia`** — abstrai onde salva "visto"/posição. Rodando sozinho: arquivo próprio (ex. `~/.argus/config.json`). Rodando na GAIA: implementação que grava no `brain.json` dela.
+- **`NotificacaoProvider`** - contrato mínimo (`providers/base.py`): `listar_categorias()` (devolve `list[Categoria]` já com `novo` calculado) e `marcar_visto(chave_ticket)`. O `core/` só fala com essa interface. `JiraProvider` expõe métodos EXTRA (`buscar_dados_brutos()`/`classificar()`/`obter_detalhes_completos()`, ver seções abaixo) que não fazem parte do contrato - opcionais, checados via `getattr` por quem consome (ex.: `ArgusWidget`), pra um provider mínimo (ou uma fonte diferente de Jira) continuar funcionando sem eles.
+- **`Persistencia`** - abstrai onde salva "visto"/posição. Rodando sozinho: arquivo próprio (ex. `~/.argus/config.json`). Rodando na GAIA: implementação que grava no `brain.json` dela.
 
 ## Distribuição
 
 - **Repo próprio no GitHub pessoal do usuário** (não dentro do repo privado `Project-GAIA`/`assistant`, que colegas não conseguem acessar).
-- GAIA consome o Argus como **dependência** (`pip install git+https://github.com/.../argus.git` ou submódulo git) — nunca código colado/duplicado.
-- Cada colega configura sua própria credencial (Basic Auth: e-mail + API token do Jira, gerado em `id.atlassian.com/manage-profile/security/api-tokens`) — mesma instância Jira, credencial individual.
+- GAIA consome o Argus como **dependência** (`pip install git+https://github.com/.../argus.git` ou submódulo git) - nunca código colado/duplicado.
+- Cada colega configura sua própria credencial (Basic Auth: e-mail + API token do Jira, gerado em `id.atlassian.com/manage-profile/security/api-tokens`) - mesma instância Jira, credencial individual.
 
 ## Tecnologia
 
-- **PySide6** — mesma stack já usada em toda a GAIA (`ui/qt_painel.py` e módulos). Janela `Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint`, `WA_TranslucentBackground`.
-- Rodando dentro da GAIA: instanciado na MESMA `QApplication` do Painel — nunca um segundo runtime Qt.
-- Polling simples (loop assíncrono, como os já existentes na GAIA pra e-mail/preço de hardware) — não webhook (exigiria expor endpoint público, infraestrutura desnecessária pra esse caso de uso).
+- **PySide6** - mesma stack já usada em toda a GAIA (`ui/qt_painel.py` e módulos). Janela `Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint`, `WA_TranslucentBackground`.
+- Rodando dentro da GAIA: instanciado na MESMA `QApplication` do Painel - nunca um segundo runtime Qt.
+- Polling simples (loop assíncrono, como os já existentes na GAIA pra e-mail/preço de hardware) - não webhook (exigiria expor endpoint público, infraestrutura desnecessária pra esse caso de uso).
 
 ## Fases sugeridas (todas concluídas, ver "Estado atual" no topo)
 

@@ -4,62 +4,59 @@
 
 # Project ARGUS
 
-Widget desktop que fica no topo mostrando novidade nos seus chamados do Jira
-(Nordware Service Desk) - sem precisar abrir o Jira ou depender de e-mail.
+Widget para Windows que acompanha chamados do Jira e destaca o que precisa de atenção.
 
-Arquitetura completa e decisões de design em [`ARQUITETURA.md`](ARQUITETURA.md).
+## Recursos principais
 
-## A origem de ARGUS
+- mostra totais e novidades por status;
+- ordena chamados por prioridade, urgência e SLA;
+- abre os detalhes sem sair do widget;
+- permite copiar o código ou o link e abrir o chamado no Jira;
+- continua funcionando durante falhas curtas de rede.
 
-O nome vem de Argos Panoptes, o gigante de cem olhos da mitologia grega,
-conhecido por sua vigilância constante.
+## Origem do nome
 
-O conceito representa a função do projeto: manter vários "olhos" sobre os
-chamados e destacar quando algo exige atenção.
+ARGUS vem de Argos Panoptes, o gigante de muitos olhos da mitologia grega. O nome representa a vigilância constante sobre vários chamados. Segundo uma tradição conhecida, Hera preservou os olhos de Argos na cauda do pavão depois de sua morte.
 
-Na mitologia grega, após a morte de Argos, Hera preservou seus muitos olhos
-nas penas da cauda do pavão, animal associado à deusa.
+### Identidade visual
 
-Por isso, o pavão foi escolhido como símbolo do ARGUS. Os "olhos" de suas
-penas representam a capacidade do sistema de observar simultaneamente
-diferentes chamados e estados, enquanto alerta o usuário quando algo muda ou
-exige atenção.
+A logo mostra um pavão cristalino com vários olhos azuis na cauda. Ela reúne **Argos → muitos olhos → pavão → vigilância** em um único símbolo.
 
-## Uso standalone
+O pavão aparece de perfil, enquanto os olhos da cauda permanecem voltados para quem observa. Essa composição transmite a sensação de que o ARGUS acompanha várias direções ao mesmo tempo.
 
-```bash
+## Requisitos
+
+- Windows;
+- Python 3.11 ou mais recente;
+- acesso ao Jira e um token de API.
+
+## Instalação e uso
+
+```powershell
 uv venv
 uv pip install -e .
-cp .env.example .env   # preencher JIRA_EMAIL e JIRA_API_TOKEN
+Copy-Item .env.example .env
 python -m argus.app
 ```
 
-Gere o token em `id.atlassian.com/manage-profile/security/api-tokens` (é um
-token de API, não a sua senha).
+Preencha `JIRA_EMAIL` e `JIRA_API_TOKEN` no `.env`. Gere o token na página de [tokens da Atlassian](https://id.atlassian.com/manage-profile/security/api-tokens).
 
-## Estado atual
+Use `iniciar_argus_oculto.vbs` para abrir sem deixar um terminal visível. `criar_atalho_desktop.vbs` cria um atalho na área de trabalho.
 
-Todas as fases originais concluídas - ver `ARQUITETURA.md`, seção "Estado
-atual". A barra mostra os 4 status do fluxo de atendimento
-(`assignee = currentUser()`), com toggle novidades/total ao clicar no ícone à
-esquerda (pavão de cristal, não mais um placeholder) e lista de tickets ao
-clicar num número, ordenada por pontuação de foco (1-100, combina
-prioridade + urgência no texto + SLA real). O código do ticket é colorido pela
-prioridade real do Jira; o título muda de cor por SLA (vermelho estourado,
-laranja faltando menos de 1h, amarelo faltando menos de 2h) e ganha um sufixo
-com o tempo restante em horas. Passar o mouse diretamente sobre o número
-`[pontuação]` mostra a composição do valor (prioridade, urgência, SLA,
-eventual piso e teto); o restante da linha não abre esse tooltip. Clicar num
-ticket abre um painel de detalhes (Time to resolution,
-Plataforma, Empresa, Relator, Responsável, Tipo de solicitação) ANEXADO à
-janela principal (clicar em outro ticket fecha o anterior e abre um novo, na
-hora), com ações rápidas (Abrir, 🔗 Copiar link, Copiar código, ⟳ Atualizar,
-📌 Destacar) e, opcionalmente, "Analisar" (gera rascunho de resposta ao
-cliente via LLM - só aparece se quem sobe o widget injetar esse gancho, ex.:
-a GAIA). "Destacar" transforma o painel numa janela independente arrastável
-(via uma barra centralizada no cabeçalho); "Reanexar" devolve pro painel
-principal - ver `ARQUITETURA.md` pro detalhe completo.
+## Integrações com outros projetos
 
-Integração com a GAIA implementada: widget visual (mesma `QApplication` do
-Painel) + monitoramento de voz (`JiraProvider` sozinho, sem o widget) + gancho
-de análise via Groq.
+- **GAIA:** adiciona avisos por voz e permite gerar um rascunho de resposta com IA dentro do painel de detalhes.
+
+O ARGUS continua útil sem essas integrações.
+
+## Documentação
+
+- [Arquitetura](docs/ARQUITETURA.md)
+- [Pendências](docs/TODO.md)
+- [Versionamento](docs/VERSIONAMENTO_CHANGELOG.md)
+- [Histórico de versões](CHANGELOG.md)
+- [Padrão de documentação](docs/PADRAO_DOCUMENTACAO.md)
+
+## Situação atual
+
+O widget, a pontuação de foco, o painel de detalhes e a integração opcional com a GAIA estão em uso.
