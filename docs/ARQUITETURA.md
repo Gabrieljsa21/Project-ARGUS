@@ -144,6 +144,47 @@ com o que já estava salvo.
 
 Ver `testes/testar_perfil_n2.py` (offline, Jira falso).
 
+## MRs vinculadas (2026-10-01)
+
+Pedido do usuário: "vc consegue me avisar qnd as MRs forem aprovadas?".
+Escolhas dele: avisar aprovação nova, MR mesclada e comentário novo; aviso
+no Argus (badge NOVO + painel) e por voz na GAIA.
+
+**Fonte, sem credencial nova:** o painel "Desenvolvimento" do próprio Jira,
+que já recebe as MRs pela integração com o GitLab (`gitlab.com/bringitbr`,
+com revisores e o campo `approved` de cada um) e com o Gitea interno
+(`git.nordware.io`, sem revisores: ali só dá pra saber mesclada/recusada).
+`JiraProvider._mrs_do_issue` chama `/rest/dev-status/latest/issue/summary`
+(quantas MRs por integração) e, só quando há MR, `.../issue/detail`
+(`applicationType` = integração, `dataType=pullrequest`). É a API interna da
+tela do Jira, sem documentação pública: qualquer falha devolve None ("não
+deu pra saber neste ciclo"), nunca derruba o ticket nem vira evento. Só
+aparecem MRs que citam o ticket (título/branch), que é como a integração
+vincula.
+
+**Estado e eventos:** `_estado_atual` guarda `mrs` (por id da MR: rótulo,
+título, url, status, aprovadores, comentários) junto do resto do "visto".
+`_evento_mr` compara com o visto: aprovador novo > mesclada > contagem de
+comentários maior, e entra em `_classificar_evento` depois de "atribuído" e
+antes de comentário no ticket. `_classificar_evento` passou a devolver
+também o detalhe (`Ticket.detalhe_evento`, ex.: "aprovada por Rafael (2
+aprovações)") pra fala da GAIA dizer quem aprovou.
+
+**Linha de base:** "visto" gravado antes desta função (ou num ciclo em que o
+painel falhou) não tem `mrs`. `classificar` grava as MRs atuais como base,
+em silêncio. Sem isso, a persistência de voz da GAIA, que só regrava o
+"visto" ao anunciar algo, nunca chegaria a ter base e nunca avisaria uma
+aprovação.
+
+**Painel de detalhes:** uma linha "MR" por MR, com link, status legível
+(`STATUS_MR_LEGIVEL`, montado no provider pra o `core/` não saber de Jira),
+aprovadores e comentários.
+
+**Custo:** 1 chamada por ticket por ciclo (+1 por integração com MR). No N2
+real (4 tickets), o ciclo completo levou cerca de 8s, em segundo plano.
+
+Ver `testes/testar_mrs.py`.
+
 ## Regra de "novidade"
 
 Um ticket entra no contador de **novidades** de uma categoria quando, desde a última vez que o usuário abriu aquele ticket especificamente, aconteceu pelo menos um destes eventos:
@@ -156,6 +197,9 @@ Um ticket entra no contador de **novidades** de uma categoria quando, desde a ú
 | Prioridade mudou | Sim |
 | Usuário comentou | Não |
 | Comentário automático do Jira ("Automation for Jira", avisos de SLA etc.) | Não |
+| MR vinculada ganhou aprovação nova (ver "MRs vinculadas") | Sim (`mr_aprovada`) |
+| MR vinculada foi mesclada | Sim (`mr_mesclada`) |
+| MR vinculada ganhou comentário (inclusive seu, o Jira só dá a contagem) | Sim (`mr_comentario`) |
 | Polling rodou e nada mudou | Não |
 
 **O que limpa a novidade:** só abrir o ticket individual (drill-down até o card dele). Abrir a lista da categoria (ver todos os tickets daquele status) **não limpa nada sozinho** - o usuário pode ter 15 tickets ali e não ter lido todos.

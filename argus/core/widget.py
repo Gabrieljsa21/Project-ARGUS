@@ -1469,6 +1469,15 @@ class _PainelDetalhesTicket(QWidget):
             ("Chamado de origem", ticket.chamado_origem, TEXT_COLOR, ticket.chamado_origem_url),
             ("N1", ticket.n1_responsavel, TEXT_COLOR),
         ]
+        # 🔥 MRs vinculadas (2026-10-01, ver JiraProvider._mrs_do_issue) - uma
+        # linha por MR, com link, status e quem já aprovou.
+        for mr in ticket.mrs:
+            partes = [mr["rotulo"], mr.get("status_legivel") or mr["status"]]
+            if mr["aprovadores"]:
+                partes.append("aprovada por " + ", ".join(mr["aprovadores"]))
+            if mr["comentarios"]:
+                partes.append(f"{mr['comentarios']} comentário{'s' if mr['comentarios'] != 1 else ''}")
+            campos.append(("MR", " · ".join(partes), TEXT_COLOR, mr["url"]))
         for rotulo, valor, cor_valor, *url in campos:
             if not valor:
                 continue

@@ -107,6 +107,15 @@ CAMPOS_ISSUE = (
 # aparecer na prática.
 PRIORIDADES_CRITICAS = {"Highest", "High"}
 
+# 🔥 MRs pelo painel "Desenvolvimento" do Jira (2026-10-01, pedido do
+# usuário: "vc consegue me avisar qnd as MRs forem aprovadas?"). A instância
+# já recebe as MRs do GitLab (gitlab.com/bringitbr, com revisores e quem
+# aprovou) e do Gitea interno (git.nordware.io, SEM revisores - ali só dá
+# pra saber mesclada/recusada). `/rest/dev-status/latest` é a API que a
+# própria tela do Jira usa, sem documentação pública: qualquer falha nela
+# deixa as MRs "desconhecidas" naquele ciclo, nunca derruba o ticket.
+STATUS_MR_LEGIVEL = {"OPEN": "Aberta", "MERGED": "Mesclada", "DECLINED": "Recusada"}
+
 
 class JiraProvider(NotificacaoProvider):
     def __init__(
@@ -448,15 +457,84 @@ class JiraProvider(NotificacaoProvider):
             "ultimo_comentario_id": ultimo["id"] if ultimo else None,
             "ultimo_comentario_autor_id": ultimo["author"]["accountId"] if ultimo else None,
             "ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
+            "mrs": self._mrs_do_issue(issue),
         }
 
+    def _mrs_do_issue(self, issue: dict) -> dict | None:
+        """MRs vinculadas ao issue, por id da MR: {rotulo, titulo, url,
+        status, aprovadores (ordenados), comentarios}. None = não deu pra
+        saber neste ciclo (a comparação de novidade pula as MRs, nunca trata
+        a falha como "MR sumiu" ou "aprovação nova")."""
+        issue_id = issue.get("id")
+        if not issue_id:
+            return None
+        try:
+            resumo = self._obter("/rest/dev-status/latest/issue/summary", params={"issueId": issue_id})
+            por_tipo = (resumo.get("summary", {}).get("pullrequest", {}) or {}).get("byInstanceType", {}) or {}
+            mrs = {}
+            for tipo, info in por_tipo.items():
+                if not (info or {}).get("count"):
+                    continue
+                detalhe = self._obter("/rest/dev-status/latest/issue/detail", params={
+                    "issueId": issue_id, "applicationType": tipo, "dataType": "pullrequest",
+                })
+                for bloco in detalhe.get("detail", []):
+                    for mr in bloco.get("pullRequests", []):
+                        identificador = mr.get("id", "")
+                        rotulo = (identificador.rsplit("/", 1)[-1] if "/" in identificador
+                                  else f"{mr.get('repositoryName', '')}{identificador}")
+                        mrs[identificador] = {
+                            "rotulo": rotulo,
+                            "titulo": mr.get("name", ""),
+                            "url": mr.get("url", ""),
+                            "status": mr.get("status", ""),
+                            "status_legivel": STATUS_MR_LEGIVEL.get(mr.get("status", ""), mr.get("status", "")),
+                            "aprovadores": sorted(r.get("name", "") for r in mr.get("reviewers", []) if r.get("approved")),
+                            "comentarios": mr.get("commentCount") or 0,
+                        }
+            return mrs
+        except (requests.RequestException, ValueError):
+            return None
+
+    @staticmethod
+    def _evento_mr(visto: dict, atual: dict) -> tuple:
+        """(tipo, detalhe) do evento de MR mais importante desde o último
+        `visto`, ou (None, ""). Ordem (pedido do usuário): aprovação nova >
+        mesclada > comentário novo. Estado antigo sem "mrs" (gravado antes
+        desta função existir) ou MRs desconhecidas num dos lados não geram
+        evento - a próxima vez que o ticket for aberto vira a linha de base.
+        Limitação: o Jira só dá a CONTAGEM de comentários, então um
+        comentário seu na MR também conta."""
+        antes, agora = visto.get("mrs"), atual.get("mrs")
+        if antes is None or agora is None:
+            return None, ""
+        aprovacao = mesclada = comentario = None
+        for identificador, mr in agora.items():
+            anterior = antes.get(identificador) or {"aprovadores": [], "status": None, "comentarios": 0}
+            novos = [a for a in mr["aprovadores"] if a not in anterior.get("aprovadores", [])]
+            if novos and aprovacao is None:
+                total = len(mr["aprovadores"])
+                aprovacao = f"aprovada por {' e '.join(novos)} ({total} aprovaç{'ão' if total == 1 else 'ões'})"
+            if mr["status"] == "MERGED" and anterior.get("status") != "MERGED" and mesclada is None:
+                mesclada = "mesclada"
+            if mr["comentarios"] > (anterior.get("comentarios") or 0) and comentario is None:
+                comentario = "com comentário novo"
+        if aprovacao:
+            return "mr_aprovada", aprovacao
+        if mesclada:
+            return "mr_mesclada", mesclada
+        if comentario:
+            return "mr_comentario", comentario
+        return None, ""
+
     def _classificar_evento(self, visto: dict | None, atual: dict) -> tuple:
-        """Devolve (novo: bool, tipo: str | None) - o tipo classifica o
+        """Devolve (novo: bool, tipo: str | None, detalhe: str) - o tipo classifica o
         motivo mais relevante da novidade (usado pela fala da GAIA por voz,
         que menciona código+status+urgência, nunca o resumo do ticket - ver
         docs/ARQUITETURA.md). Ordem de checagem = ordem de importância: ticket
         nunca visto > virou crítico > mudou de status > mudou de prioridade
-        (não-crítica) > reatribuído > comentário de terceiro.
+        (não-crítica) > reatribuído > evento de MR (aprovação, merge,
+        comentário - `_evento_mr`) > comentário de terceiro no ticket.
 
         🔥 Status mudado pelo PRÓPRIO usuário não conta como novidade
         (2026-08-21, pedido do usuário: "quando a mudança for apenas de
@@ -470,24 +548,27 @@ class JiraProvider(NotificacaoProvider):
         reatribuição, comentário) porque a MESMA atualização pode ter trazido
         mais de um evento junto."""
         if visto is None:
-            return True, "novo"
+            return True, "novo", ""
         prioridade_mudou = visto.get("prioridade") != atual["prioridade"]
         if prioridade_mudou and atual["prioridade"] in PRIORIDADES_CRITICAS:
-            return True, "critico"
+            return True, "critico", ""
         status_mudou = visto.get("status") != atual["status"]
         if status_mudou and self._autor_ultima_mudanca_status(atual["chave"]) == self._minha_account_id:
             status_mudou = False
         if status_mudou:
-            return True, "status_mudou"
+            return True, "status_mudou", ""
         if prioridade_mudou:
-            return True, "prioridade_mudou"
+            return True, "prioridade_mudou", ""
         if visto.get("assignee_id") != atual["assignee_id"]:
-            return True, "atribuido"
+            return True, "atribuido", ""
+        tipo_mr, detalhe_mr = self._evento_mr(visto, atual)
+        if tipo_mr:
+            return True, tipo_mr, detalhe_mr
         if self._comentario_novo_de_terceiro(visto, atual):
-            return True, "comentario"
+            return True, "comentario", ""
         if self._comentario_novo_de_terceiro(visto, atual, prefixo="origem_"):
-            return True, "comentario"
-        return False, None
+            return True, "comentario", ""
+        return False, None, ""
 
     def _comentario_novo_de_terceiro(self, visto: dict, atual: dict, prefixo: str = "") -> bool:
         """`prefixo="origem_"` checa o NSD de origem (perfil N2, ver
@@ -589,7 +670,17 @@ class JiraProvider(NotificacaoProvider):
             tickets = []
             for tb in tickets_brutos:
                 visto = persistencia.obter_estado_ticket(tb["chave"])
-                novo, tipo_evento = self._classificar_evento(visto, tb["atual"])
+                novo, tipo_evento, detalhe_evento = self._classificar_evento(visto, tb["atual"])
+                # 🔥 Linha de base das MRs (2026-10-01): "visto" gravado antes
+                # das MRs existirem (ou num ciclo em que o painel de
+                # desenvolvimento falhou) não tem com o que comparar. Sem isso,
+                # uma persistência que só regrava o "visto" ao anunciar algo
+                # (a de voz da GAIA) nunca avisaria aprovação nenhuma. Grava as
+                # MRs atuais como base, em silêncio, sem mexer no resto do
+                # estado - a próxima mudança já conta.
+                mrs_atuais = tb["atual"].get("mrs")
+                if visto is not None and visto.get("mrs") is None and mrs_atuais is not None:
+                    persistencia.salvar_estado_ticket(tb["chave"], {**visto, "mrs": mrs_atuais})
                 tickets.append(Ticket(
                     chave=tb["chave"],
                     resumo=tb["resumo"],
@@ -599,6 +690,8 @@ class JiraProvider(NotificacaoProvider):
                     atualizado_em=tb["atualizado_em"],
                     novo=novo,
                     tipo_evento=tipo_evento,
+                    detalhe_evento=detalhe_evento,
+                    mrs=list((tb["atual"].get("mrs") or {}).values()),
                     pontuacao_foco=tb["pontuacao_foco"],
                     detalhamento_pontuacao=tb.get("detalhamento_pontuacao"),
                     urgencia_no_texto=tb["urgencia_no_texto"],
