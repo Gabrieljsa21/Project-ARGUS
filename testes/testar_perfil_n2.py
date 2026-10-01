@@ -44,11 +44,19 @@ class _JiraFalso:
                           assignee={"accountId": CONTA_N1, "displayName": "Pessoa N1"}, empresa="Cliente X")
         self.dev = _issue("PLATZ-1", "Code Review", links=["NSD-1"])
         self.sem_origem = _issue("PLATZ-2", "Pronto")
+        self.fora_do_board = _issue("BAHN-3", "Aberto")
 
     def obter(self, caminho, params=None, tentativas=3):
         if caminho == "/rest/api/3/search/jql":
-            if "project = PLATZ" in params["jql"]:
-                return {"issues": [self.dev, self.sem_origem]}
+            jql = params["jql"]
+            if "project in (PLATZ, BAHN)" not in jql:
+                return {"issues": []}  # JQL do perfil N1
+            if "status in (13157)" in jql:
+                return {"issues": [self.dev]}
+            if "status in (13155, 4, 13154)" in jql:
+                return {"issues": [self.sem_origem]}
+            if "status not in" in jql:
+                return {"issues": [self.fora_do_board]}
             return {"issues": []}
         if caminho == "/rest/servicedeskapi/request/NSD-1/sla":
             return {"values": [{"name": "Time to resolution", "ongoingCycle": {
@@ -56,7 +64,7 @@ class _JiraFalso:
         if caminho.startswith("/rest/servicedeskapi/"):
             raise AssertionError(f"SLA não deveria ser buscado em {caminho}")
         chave = caminho.rsplit("/", 1)[-1]
-        return {"NSD-1": self.nsd, "PLATZ-1": self.dev, "PLATZ-2": self.sem_origem}[chave]
+        return {"NSD-1": self.nsd, "PLATZ-1": self.dev, "PLATZ-2": self.sem_origem, "BAHN-3": self.fora_do_board}[chave]
 
 
 def _provider(persistencia, jira):
@@ -94,9 +102,15 @@ def main():
 
     persistencia.salvar_configuracoes({"perfil": "n2"})
     categorias = provider.listar_categorias()
-    checar("categorias por projeto", [c.nome_exibicao for c in categorias] == ["Platz", "Bahn"])
-    checar("lista mostra status", all(c.mostrar_status_na_lista for c in categorias))
-    platz = {t.chave: t for t in categorias[0].tickets}
+    por_nome = {c.nome_exibicao: c for c in categorias}
+    checar("categorias = colunas do board + Outros", list(por_nome) == [
+        "Disponível", "Em Andamento", "Em Revisão", "Em Publicação", "Em Validação", "Impedido", "Outros"])
+    checar("PLATZ e BAHN juntos por status", [t.chave for t in por_nome["Em Revisão"].tickets] == ["PLATZ-1"]
+           and [t.chave for t in por_nome["Disponível"].tickets] == ["PLATZ-2"])
+    checar("status fora do board cai em Outros", [t.chave for t in por_nome["Outros"].tickets] == ["BAHN-3"])
+    checar("status na linha só onde a coluna junta vários", por_nome["Disponível"].mostrar_status_na_lista
+           and por_nome["Outros"].mostrar_status_na_lista and not por_nome["Em Revisão"].mostrar_status_na_lista)
+    platz = {t.chave: t for c in categorias for t in c.tickets}
     dev = platz["PLATZ-1"]
     checar("SLA vem do NSD de origem", dev.sla_texto == "1h")
     checar("chamado de origem preenchido", dev.chamado_origem == "NSD-1" and dev.chamado_origem_url.endswith("/browse/NSD-1"))
@@ -105,7 +119,7 @@ def main():
     checar("ticket fora do suporte aparece, sem SLA", platz["PLATZ-2"].sla_texto == "" and platz["PLATZ-2"].chamado_origem == "")
 
     provider.marcar_visto("PLATZ-1")
-    checar("visto limpa a novidade", not provider.listar_categorias()[0].tickets[0].novo)
+    checar("visto limpa a novidade", not _ticket(provider, "PLATZ-1").novo)
 
     jira.nsd["fields"]["comment"]["comments"].append(_comentario(1, MINHA_CONTA, "Eu"))
     checar("comentário próprio no NSD não conta", not _ticket(provider, "PLATZ-1").novo)

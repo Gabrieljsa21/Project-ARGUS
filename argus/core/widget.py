@@ -2088,9 +2088,9 @@ class ArgusWidget(QWidget):
         # 🔥 Sufixo de SLA (2026-08-28) - entra na MESMA string que já elide
         # (como o "● NOVO" de sempre), então some primeiro se a linha for
         # curta demais pra caber tudo - mesma prioridade visual do resto.
-        # 🔥 Status antes do resumo quando a categoria é por PROJETO (perfil
-        # N2, 2026-10-01) - o nome da categoria ("Platz"/"Bahn") não diz em
-        # que etapa do board o ticket está.
+        # 🔥 Status antes do resumo quando a categoria junta mais de um
+        # status (perfil N2, 2026-10-01, ex.: "Disponível" = Pronto/Reaberto/
+        # Refinement) - o nome da categoria sozinho não diz qual é.
         status = f"{ticket.status} · " if mostrar_status else ""
         resumo_elidido = metricas.elidedText(f"— {status}{ticket.resumo}{sufixo}{_sufixo_sla(ticket)}", Qt.ElideRight, largura_resumo)
         linha = _LinhaTicket(ticket, resumo_elidido, fonte, self._ticket_clicado)

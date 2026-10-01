@@ -116,7 +116,7 @@ usa a chave do projeto, não o filtro do board.
 | Ponto | Decisão |
 |---|---|
 | NSD x N2 | Alternável no menu de Configurações (`perfil`: `n1`/`n2`), sem misturar as duas visões. Padrão N1, para os colegas que só fazem atendimento. |
-| Agrupamento | Uma categoria por projeto (Platz, Bahn). A linha mostra `status · resumo` (`Categoria.mostrar_status_na_lista`). |
+| Agrupamento | Colunas dos boards (`COLUNAS_N2`: Disponível, Em Andamento, Em Revisão, Em Publicação, Em Validação, Impedido), por ID de status, com PLATZ e BAHN juntos; status fora delas (ex.: Aberto, QA, UAT) cai em "Outros". A linha mostra `status · resumo` só onde a coluna junta mais de um status (Disponível, Outros). Corrigido no mesmo dia: a 1ª versão agrupava por projeto, mas o prefixo da chave já diz o sistema ("acho q deveria ter divisao por status tbm, igual era no N1. E os tickets ja tem o nome do sistema"). |
 | Escopo | `project = X AND assignee = currentUser() AND statusCategory != Done`, inclusive ticket sem origem no suporte (ex.: "Nova função" de backlog). |
 | SLA | Só existe no NSD: o endpoint de SLA responde 404 para o ticket de dev. O SLA vem do NSD de origem; ticket sem origem fica sem SLA (a pontuação usa só prioridade e urgência). |
 | Novidade | Estado do PRÓPRIO ticket de dev + último comentário do NSD de origem (`origem_ultimo_comentario_*`). Comentário próprio ou de automação não conta, mesma regra do ticket principal (`_comentario_novo_de_terceiro`). |

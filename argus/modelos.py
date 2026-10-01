@@ -91,9 +91,9 @@ class Categoria:
     chave: str
     nome_exibicao: str
     tickets: list = field(default_factory=list)
-    # 🔥 Categoria agrupada por PROJETO (perfil N2), não por status - a lista
-    # precisa mostrar o status de cada ticket na linha, já que o nome da
-    # categoria não diz mais em que etapa ele está.
+    # 🔥 Categoria que junta mais de um status (perfil N2, ex.: coluna
+    # "Disponível" = Pronto/Reaberto/Refinement, ou "Outros") - a linha
+    # precisa dizer em qual status exato o ticket está.
     mostrar_status_na_lista: bool = False
 
     @property
