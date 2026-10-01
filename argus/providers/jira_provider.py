@@ -4,8 +4,9 @@ docs/ARQUITETURA.md "Perfil N1/N2"):
 - N1: fluxo de atendimento (assignee = você mesmo), nos 4 status do NSD -
   "Em Revisão", "Aguardando atendimento", "Aguardando cliente" e "Aguardando
   desenvolvimento".
-- N2: tickets de desenvolvimento PLATZ/BAHN atribuídos a você, uma categoria
-  por projeto, com SLA/comentários/N1 lidos do chamado NSD de origem.
+- N2: tickets de desenvolvimento PLATZ/BAHN atribuídos a você, por coluna
+  do board (Disponível, Em Andamento, Em Revisão...), com SLA/comentários/N1
+  lidos do chamado NSD de origem.
 
 Heurística de novidade (validada com o usuário, ver docs/ARQUITETURA.md): conta como
 novo desde a última vez que o ticket foi ABERTO (não desde a última checagem) -
@@ -49,14 +50,32 @@ CATEGORIAS_STATUS = [
 # 🔥 Perfil N2 (2026-10-01, pedido do usuário: "agora eu virei dev... os
 # tickets q o suporte n1 me manda, ja q sou o n2, cai em 2 boards diferentes")
 # - o N1 continua dono do chamado NSD; a automação cria o ticket de dev
-# (PLATZ/BAHN, boards 462/375) e ele é atribuído ao N2. Uma categoria por
-# PROJETO (escolha do usuário), com tudo que está atribuído e não concluído -
-# inclusive ticket sem origem no suporte (ex.: "Nova função" de backlog).
-CATEGORIAS_PROJETO_N2 = [
-    ("platz", "Platz", "PLATZ"),
-    ("bahn", "Bahn", "BAHN"),
+# (PLATZ/BAHN, boards 462/375) e ele é atribuído ao N2. Tudo que está
+# atribuído e não concluído entra, inclusive ticket sem origem no suporte
+# (ex.: "Nova função" de backlog).
+#
+# 🔥 Categorias = COLUNAS do board, não projeto (2026-10-01, pedido do
+# usuário: "acho q deveria ter divisao por status tbm, igual era no N1. E os
+# tickets ja tem o nome do sistema") - a 1ª versão agrupava por projeto
+# (Platz/Bahn), o que repetia o prefixo da chave e escondia a etapa. Os dois
+# boards têm as MESMAS colunas e os MESMOS IDs de status (confirmado contra
+# `/rest/agile/1.0/board/{462,375}/configuration`), então uma categoria
+# junta PLATZ e BAHN. IDs, não nomes, pelo mesmo motivo do N1 (ver docstring
+# do módulo). Status fora das colunas (ex.: "Aberto", QA, UAT) caem em
+# "Outros" pra nenhum ticket sumir. `status_na_lista` = coluna com mais de
+# um status, onde a linha precisa dizer qual (ex.: Reaberto x Pronto).
+PROJETOS_N2 = ("PLATZ", "BAHN")
+COLUNAS_N2 = [
+    # (chave, nome da coluna no board, IDs de status, status_na_lista)
+    ("disponivel", "Disponível", (13155, 4, 13154), True),
+    ("andamento", "Em Andamento", (3,), False),
+    ("revisao", "Em Revisão", (13157,), False),
+    ("publicacao", "Em Publicação", (13158,), False),
+    ("validacao", "Em Validação", (13413,), False),
+    ("impedido", "Impedido", (13159,), False),
 ]
-CHAVES_CATEGORIAS_N2 = {chave for chave, _, _ in CATEGORIAS_PROJETO_N2}
+CHAVE_OUTROS_N2 = "outros"
+CHAVES_COM_STATUS_NA_LISTA = {c for c, _, _, mostrar in COLUNAS_N2 if mostrar} | {CHAVE_OUTROS_N2}
 PROJETO_ATENDIMENTO = "NSD"
 
 TIPO_VINCULO_DEV = "Problem/Incident"
@@ -129,11 +148,15 @@ class JiraProvider(NotificacaoProvider):
     def _definicao_categorias(self) -> list:
         """(chave, nome de exibição, JQL) de cada categoria do perfil atual."""
         if self.perfil == PERFIL_N2:
-            return [
-                (chave, nome, f"project = {projeto} AND assignee = currentUser() "
-                              "AND statusCategory != Done ORDER BY updated DESC")
-                for chave, nome, projeto in CATEGORIAS_PROJETO_N2
+            base = f"project in ({', '.join(PROJETOS_N2)}) AND assignee = currentUser()"
+            todos_ids = ", ".join(str(i) for _, _, ids, _ in COLUNAS_N2 for i in ids)
+            categorias = [
+                (chave, nome, f"{base} AND status in ({', '.join(map(str, ids))}) ORDER BY updated DESC")
+                for chave, nome, ids, _ in COLUNAS_N2
             ]
+            categorias.append((CHAVE_OUTROS_N2, "Outros",
+                               f"{base} AND statusCategory != Done AND status not in ({todos_ids}) ORDER BY updated DESC"))
+            return categorias
         return [
             (chave, nome, f"assignee = currentUser() AND status = {id_status} ORDER BY updated DESC")
             for chave, nome, id_status in CATEGORIAS_STATUS
@@ -591,7 +614,7 @@ class JiraProvider(NotificacaoProvider):
             tickets.sort(key=lambda t: t.pontuacao_foco, reverse=True)
             categorias.append(Categoria(
                 chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets,
-                mostrar_status_na_lista=chave_cat in CHAVES_CATEGORIAS_N2,
+                mostrar_status_na_lista=chave_cat in CHAVES_COM_STATUS_NA_LISTA,
             ))
         return categorias
 
