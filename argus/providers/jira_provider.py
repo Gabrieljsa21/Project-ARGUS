@@ -28,13 +28,12 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 `/rest/api/3/project/NSD/statuses` - só valem PRA ESTE projeto (NSD); mudariam
 se um dia o fluxo for replicado em outro projeto Jira."""
 
-import os
 import time
 from typing import Callable
 
 import requests
 
-from ..modelos import PERFIL_N1, PERFIL_N2, Categoria, Ticket
+from ..modelos import PERFIL_N1, PERFIL_N2, Categoria, Ticket, perfil_configurado
 from ..persistencia import Persistencia
 from ..pontuacao import calcular_detalhamento_pontuacao, detectar_urgencia_no_texto
 from ..seguranca import mascarar
@@ -53,7 +52,6 @@ CATEGORIAS_STATUS = [
 # (PLATZ/BAHN, boards 462/375) e ele é atribuído ao N2. Uma categoria por
 # PROJETO (escolha do usuário), com tudo que está atribuído e não concluído -
 # inclusive ticket sem origem no suporte (ex.: "Nova função" de backlog).
-PERFIL_PADRAO = PERFIL_N1
 CATEGORIAS_PROJETO_N2 = [
     ("platz", "Platz", "PLATZ"),
     ("bahn", "Bahn", "BAHN"),
@@ -126,9 +124,7 @@ class JiraProvider(NotificacaoProvider):
         de voz da GAIA, sem reiniciar nada. Ordem: config salva pelo menu >
         `ARGUS_PERFIL` no `.env` > N1 (comportamento original, padrão pros
         colegas que só fazem atendimento)."""
-        perfil = self._persistencia_configuracoes.obter_configuracoes().get("perfil")
-        perfil = perfil or os.environ.get("ARGUS_PERFIL", PERFIL_PADRAO)
-        return perfil if perfil in (PERFIL_N1, PERFIL_N2) else PERFIL_PADRAO
+        return perfil_configurado(self._persistencia_configuracoes.obter_configuracoes())
 
     def _definicao_categorias(self) -> list:
         """(chave, nome de exibição, JQL) de cada categoria do perfil atual."""

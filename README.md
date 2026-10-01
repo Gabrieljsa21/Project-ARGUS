@@ -46,7 +46,7 @@ Preencha `JIRA_EMAIL` e `JIRA_API_TOKEN` no `.env`. Gere o token na página de [
 - **N1 (padrão):** chamados do Service Desk (NSD) atribuídos a você, agrupados por status.
 - **N2:** tickets de desenvolvimento dos projetos Platz e Bahn atribuídos a você, agrupados por projeto. O SLA e a conversa com o cliente vêm do chamado NSD de origem, e o painel mostra quem é o N1 responsável.
 
-Troque em **Configurações... → Perfil de atendimento** (menu da bandeja). `ARGUS_PERFIL=n2` no `.env` define o padrão inicial.
+Troque em **Configurações... → Perfil de atendimento** (menu da bandeja, ou o botão "⚙️ Abrir configurações do Argus" no modal do Argus quando ele roda pela GAIA). `ARGUS_PERFIL=n2` no `.env` define o padrão inicial.
 
 Use `iniciar_argus_oculto.vbs` para abrir sem deixar um terminal visível. `criar_atalho_desktop.vbs` cria um atalho na área de trabalho.
 

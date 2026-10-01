@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from argus.core.widget import ArgusWidget, _DialogoConfiguracoes
+from argus.core.widget import ArgusWidget, _DialogoConfiguracoes, salvar_configuracoes_do_dialogo
 from argus.persistencia import PersistenciaArquivo
 from argus.providers.jira_provider import JiraProvider
 
@@ -127,6 +127,27 @@ def main():
     checar("dialog devolve perfil N2", dialogo.perfil_n2 is True)
     sem_perfil = _DialogoConfiguracoes(7, False, parent=widget)
     checar("provider sem perfil não mostra o card", not hasattr(sem_perfil, "_campo_perfil"))
+
+    # Tela nativa aberta por fora do widget (como a GAIA faz) - sem parent.
+    persistencia.salvar_configuracoes({"perfil": "n1", "limite_janelas_destacadas": 7, "opcao_da_gaia": "x"})
+    sem_widget = _DialogoConfiguracoes(7, False, perfil_n2=False)
+    sem_widget._campo_perfil.setChecked(True)
+    sem_widget._confirmar()
+    salvo = salvar_configuracoes_do_dialogo(persistencia, sem_widget)
+    checar("tela sem widget grava o perfil", persistencia.obter_configuracoes().get("perfil") == "n2")
+    checar("salvar mescla e mantém opção desconhecida", salvo.get("opcao_da_gaia") == "x")
+
+    widget.atualizar()
+    widget._tarefa_atualizacao.wait()
+    app.processEvents()
+    app.processEvents()
+    checar("widget registra o perfil exibido", widget._perfil_exibido == "n2")
+    recarregou = []
+    widget.atualizar = lambda: recarregou.append(True)
+    widget.aplicar_configuracoes({"perfil": "n2", "chacoalhada_ativa": True})
+    checar("mesmo perfil não recarrega, mas aplica o resto", not recarregou and widget._chacoalhada_ativa is True)
+    widget.aplicar_configuracoes({"perfil": "n1"})
+    checar("perfil diferente recarrega a lista", recarregou == [True])
 
     print(f"\n{len(falhas)} falha(s)")
     return 1 if falhas else 0
