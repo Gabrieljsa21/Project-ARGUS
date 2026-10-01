@@ -84,6 +84,14 @@ class Ticket:
     chamado_origem: str = ""
     chamado_origem_url: str = ""
     n1_responsavel: str = ""
+    # 🔥 MRs vinculadas ao ticket (2026-10-01, pedido do usuário: "vc
+    # consegue me avisar qnd as MRs forem aprovadas?") - lidas do painel
+    # "Desenvolvimento" do Jira (integração com GitLab/Gitea). Cada item:
+    # {rotulo, titulo, url, status, aprovadores, comentarios}.
+    mrs: list = field(default_factory=list)
+    # Complemento legível do `tipo_evento` (ex.: "aprovada por Fulano") -
+    # hoje só os eventos de MR preenchem.
+    detalhe_evento: str = ""
 
 
 @dataclass

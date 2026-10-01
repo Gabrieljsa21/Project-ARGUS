@@ -12,6 +12,7 @@ Widget para Windows que acompanha chamados do Jira e destaca o que precisa de at
 - ordena chamados por prioridade, urgência e SLA;
 - abre os detalhes sem sair do widget;
 - permite copiar o código ou o link e abrir o chamado no Jira;
+- avisa quando uma MR vinculada ao ticket é aprovada, mesclada ou comentada (pelo painel "Desenvolvimento" do Jira);
 - continua funcionando durante falhas curtas de rede.
 
 ## Origem do nome
