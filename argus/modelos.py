@@ -1,6 +1,7 @@
 """Estruturas de dado que atravessam a fronteira provider -> core. O core/ (janela,
 barra, listas) só enxerga Ticket/Categoria - nunca um dict cru de resposta de API."""
 
+import os
 from dataclasses import dataclass, field
 
 # 🔥 Perfil de atendimento (2026-10-01, ver docs/ARQUITETURA.md "Perfil N1/N2")
@@ -8,6 +9,16 @@ from dataclasses import dataclass, field
 # o core/ grava a escolha do menu, o provider interpreta.
 PERFIL_N1 = "n1"
 PERFIL_N2 = "n2"
+PERFIL_PADRAO = PERFIL_N1
+
+
+def perfil_configurado(configuracoes: dict) -> str:
+    """Perfil ativo: config salva pela tela de Configurações > `ARGUS_PERFIL`
+    no `.env` > N1 (padrão pros colegas que só fazem atendimento). Fonte
+    única pro provider (que busca as categorias) e pra tela (que mostra o
+    estado atual)."""
+    perfil = configuracoes.get("perfil") or os.environ.get("ARGUS_PERFIL", PERFIL_PADRAO)
+    return perfil if perfil in (PERFIL_N1, PERFIL_N2) else PERFIL_PADRAO
 
 
 @dataclass(frozen=True)

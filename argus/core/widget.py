@@ -49,7 +49,7 @@ from .tema import (
     GAIA_GOLD, GAIA_GOLD_HOVER, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
     cor_com_alpha,
 )
-from ..modelos import PERFIL_N1, PERFIL_N2
+from ..modelos import PERFIL_N1, PERFIL_N2, perfil_configurado
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 
 LIMIAR_ARRASTAR_PIXELS = 6
@@ -1118,6 +1118,43 @@ class _DialogoConfiguracoes(QDialog):
         self.accept()
 
 
+def salvar_configuracoes_do_dialogo(persistencia, dialogo) -> dict:
+    """Grava o que o usuário escolheu MESCLANDO com o que já estava salvo
+    (opção que o dialog não conhece nunca é apagada). Devolve o dict salvo."""
+    configuracoes = persistencia.obter_configuracoes()
+    configuracoes.update({
+        "limite_janelas_destacadas": dialogo.limite_janelas_destacadas,
+        "chacoalhada_ativa": dialogo.chacoalhada_ativa,
+    })
+    if dialogo.perfil_n2 is not None:
+        configuracoes["perfil"] = PERFIL_N2 if dialogo.perfil_n2 else PERFIL_N1
+    persistencia.salvar_configuracoes(configuracoes)
+    return configuracoes
+
+
+def abrir_configuracoes_argus(
+    persistencia, parent=None, com_perfil=True, limite_atual=None, chacoalhada_atual=None,
+) -> dict | None:
+    """Tela de Configurações NATIVA do Argus (2026-10-01, pedido do usuário:
+    "assim como o loki, o argus deveria ter sua propria tela de config. E a
+    gaia pega dele") - fonte única das opções do Argus, aberta pela bandeja
+    no uso standalone (via `ArgusWidget.abrir_configuracoes`) e pela GAIA
+    mesmo sem o widget aberto. Quem embute o Argus nunca duplica estes
+    campos; só acrescenta na própria UI o que é dele (ex.: voz na GAIA).
+
+    Devolve o dict salvo, ou None se o usuário cancelou."""
+    config = persistencia.obter_configuracoes()
+    dialogo = _DialogoConfiguracoes(
+        limite_atual if limite_atual is not None else config.get("limite_janelas_destacadas", LIMITE_JANELAS_DESTACADAS_PADRAO),
+        chacoalhada_atual if chacoalhada_atual is not None else config.get("chacoalhada_ativa", ATIVAR_CHACOALHADA_ATENCAO),
+        parent,
+        perfil_n2=(perfil_configurado(config) == PERFIL_N2) if com_perfil else None,
+    )
+    if dialogo.exec() != QDialog.Accepted:
+        return None
+    return salvar_configuracoes_do_dialogo(persistencia, dialogo)
+
+
 class _AlcaArraste(QWidget):
     """Pequena barra de arraste CENTRALIZADA acima da linha de botões, em
     QUALQUER painel de detalhes - anexado ou destacado (2026-08-16, pedido
@@ -1699,6 +1736,7 @@ class ArgusWidget(QWidget):
         # coletado pelo GC no meio da execução, e pra `atualizar()` saber se
         # já tem uma busca em andamento.
         self._tarefa_atualizacao = None
+        self._perfil_exibido = None
 
         # 🔥 Painel de detalhes anexado/destacado (2026-08-15, ver
         # argus_painel_detalhes_ticket.md) - `_painel_anexado` é a instância
@@ -1798,6 +1836,9 @@ class ArgusWidget(QWidget):
         empilha outra - espera a atual terminar."""
         if self._tarefa_atualizacao is not None and self._tarefa_atualizacao.isRunning():
             return
+        # Perfil que gerou a lista exibida - `aplicar_configuracoes` só
+        # recarrega quando o perfil salvo for diferente deste.
+        self._perfil_exibido = getattr(self._provider, "perfil", None)
         self._tarefa_atualizacao = _TarefaSegundoPlano(self._provider.listar_categorias, self)
         self._tarefa_atualizacao.concluido.connect(self._ao_atualizar_concluido)
         self._tarefa_atualizacao.erro.connect(self._ao_atualizar_falhou)
@@ -2091,28 +2132,22 @@ class ArgusWidget(QWidget):
         item de menu no Painel dela) do mesmo jeito."""
         # Provider sem perfil (fonte que não é o Jira) não mostra o card.
         perfil_atual = getattr(self._provider, "perfil", None)
-        dialogo = _DialogoConfiguracoes(
-            self._limite_janelas_destacadas, self._chacoalhada_ativa,
-            perfil_n2=None if perfil_atual is None else perfil_atual == PERFIL_N2, parent=self,
+        configuracoes = abrir_configuracoes_argus(
+            self._persistencia, self, com_perfil=perfil_atual is not None,
+            limite_atual=self._limite_janelas_destacadas, chacoalhada_atual=self._chacoalhada_ativa,
         )
-        if dialogo.exec() == QDialog.Accepted:
-            self._limite_janelas_destacadas = dialogo.limite_janelas_destacadas
-            self._chacoalhada_ativa = dialogo.chacoalhada_ativa
-            # 🔥 Mescla com o que já estava salvo (2026-10-01) - antes o dict
-            # era reescrito inteiro só com as opções que este dialog conhecia.
-            configuracoes = self._persistencia.obter_configuracoes()
-            configuracoes.update({
-                "limite_janelas_destacadas": self._limite_janelas_destacadas,
-                "chacoalhada_ativa": self._chacoalhada_ativa,
-            })
-            perfil_novo = perfil_atual
-            if perfil_atual is not None:
-                perfil_novo = PERFIL_N2 if dialogo.perfil_n2 else PERFIL_N1
-                configuracoes["perfil"] = perfil_novo
-            self._persistencia.salvar_configuracoes(configuracoes)
-            if perfil_novo != perfil_atual:
-                self._fechar_painel()
-                self.atualizar()
+        if configuracoes is not None:
+            self.aplicar_configuracoes(configuracoes)
+
+    def aplicar_configuracoes(self, configuracoes):
+        """Aplica em tempo real o que foi salvo pela tela de Configurações -
+        público pra quem abriu a tela por fora do widget (ex.: a GAIA, via
+        `abrir_configuracoes_argus`) com o widget já aberto."""
+        self._limite_janelas_destacadas = configuracoes.get("limite_janelas_destacadas", self._limite_janelas_destacadas)
+        self._chacoalhada_ativa = configuracoes.get("chacoalhada_ativa", self._chacoalhada_ativa)
+        if "perfil" in configuracoes and configuracoes["perfil"] != self._perfil_exibido:
+            self._fechar_painel()
+            self.atualizar()
 
     def _ticket_clicado(self, ticket):
         """Controle de instância (2026-08-15, ver

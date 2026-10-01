@@ -609,6 +609,23 @@ na própria UI do mesmo jeito (método público).
 
 Ver `testes/testar_configuracoes.py`.
 
+**Tela nativa, fonte única (2026-10-01, pedido do usuário: "assim como o
+loki, o argus deveria ter sua propria tela de config. E a gaia pega dele,
+igual loki. E oq for a parte da gaia, aparece qnd gaia tiver com ele"):**
+mesmo padrão do Project LOKI (modal nativo no próprio projeto; quem embute
+só acrescenta o que é dele). `abrir_configuracoes_argus(persistencia,
+parent, com_perfil, limite_atual, chacoalhada_atual)` abre o
+`_DialogoConfiguracoes` SEM depender de um `ArgusWidget` - a GAIA chama
+direto quando o widget está fechado. `salvar_configuracoes_do_dialogo`
+grava mesclando com o que já estava salvo. Com o widget aberto, quem chama
+`ArgusWidget.abrir_configuracoes()` (bandeja no standalone, botão da GAIA)
+recebe tudo aplicado via `aplicar_configuracoes`, que só recarrega a lista
+se o perfil salvo for diferente do que gerou a lista exibida
+(`_perfil_exibido`, registrado a cada `atualizar()`). A leitura do perfil
+(config > `ARGUS_PERFIL` > N1) virou `modelos.perfil_configurado`, usada
+pelo provider e pela tela. Opções que só fazem sentido com a GAIA (voz,
+lembrete, análise de print por IA) continuam no modal dela, nunca aqui.
+
 Botão "Analisar" (só aparece se AMBOS `JiraProvider.obter_detalhes_completos`
 E um gancho `analisar_ticket` forem injetados - opcional, mesmo espírito do
 gancho de Visão): busca descrição + TODOS os comentários sob demanda

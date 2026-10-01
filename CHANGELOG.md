@@ -11,6 +11,7 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 ## [Unreleased]
 
 ### Adicionado
+- **Tela de Configurações nativa, também fora do widget** - `abrir_configuracoes_argus(persistencia)` abre a tela de Configurações do Argus (perfil N1/N2, limite de janelas destacadas, chacoalhada) sem precisar do widget aberto, e `ArgusWidget.aplicar_configuracoes` aplica o resultado na hora quando ele está aberto. É a fonte única dessas opções: a GAIA passa a abrir esta tela em vez de repetir os campos no modal dela, no mesmo padrão do LOKI. Ver `docs/ARQUITETURA.md`, seção "Menu de Configurações".
 - **Perfil N2 (Platz e Bahn)** - novo seletor "Perfil de atendimento" no menu de Configurações. No N2, o Argus acompanha os tickets de desenvolvimento atribuídos a você nos projetos PLATZ e BAHN (boards 462 e 375), uma categoria por projeto, com o status de cada ticket na linha. O SLA, a empresa e a plataforma vêm do chamado NSD de origem; comentário do cliente ou do N1 nesse NSD conta como novidade; o painel de detalhes mostra o chamado de origem (link) e o N1 responsável; o botão "Analisar" inclui a conversa do NSD. Tickets sem origem no suporte também aparecem. O perfil N1 continua sendo o padrão. Ver `docs/ARQUITETURA.md`, seção "Perfil N1/N2".
 
 ### Corrigido
