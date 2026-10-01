@@ -3,6 +3,12 @@ barra, listas) só enxerga Ticket/Categoria - nunca um dict cru de resposta de A
 
 from dataclasses import dataclass, field
 
+# 🔥 Perfil de atendimento (2026-10-01, ver docs/ARQUITETURA.md "Perfil N1/N2")
+# - aqui (fronteira provider -> core) porque os dois lados precisam do valor:
+# o core/ grava a escolha do menu, o provider interpreta.
+PERFIL_N1 = "n1"
+PERFIL_N2 = "n2"
+
 
 @dataclass(frozen=True)
 class DetalhamentoPontuacao:
@@ -60,6 +66,13 @@ class Ticket:
     # ver `core/widget.py::_LinhaTicket`) - `sla_texto` não dá pra comparar
     # contra limiar de forma confiável (formato livre do Jira).
     sla_restante_millis: int | None = None
+    # 🔥 Perfil N2 (2026-10-01, ver docs/ARQUITETURA.md "Perfil N1/N2") - o
+    # ticket de dev (PLATZ/BAHN) aponta pro chamado de atendimento (NSD) que
+    # o originou, e quem conversa com o cliente é o N1 (responsável do NSD).
+    # Vazio no perfil N1 ou em ticket de dev sem vínculo com o NSD.
+    chamado_origem: str = ""
+    chamado_origem_url: str = ""
+    n1_responsavel: str = ""
 
 
 @dataclass
@@ -67,6 +80,10 @@ class Categoria:
     chave: str
     nome_exibicao: str
     tickets: list = field(default_factory=list)
+    # 🔥 Categoria agrupada por PROJETO (perfil N2), não por status - a lista
+    # precisa mostrar o status de cada ticket na linha, já que o nome da
+    # categoria não diz mais em que etapa ele está.
+    mostrar_status_na_lista: bool = False
 
     @property
     def total(self) -> int:

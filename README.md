@@ -8,7 +8,7 @@ Widget para Windows que acompanha chamados do Jira e destaca o que precisa de at
 
 ## Recursos principais
 
-- mostra totais e novidades por status;
+- mostra totais e novidades por status (perfil N1) ou por projeto Platz/Bahn (perfil N2);
 - ordena chamados por prioridade, urgência e SLA;
 - abre os detalhes sem sair do widget;
 - permite copiar o código ou o link e abrir o chamado no Jira;
@@ -40,6 +40,13 @@ python -m argus.app
 ```
 
 Preencha `JIRA_EMAIL` e `JIRA_API_TOKEN` no `.env`. Gere o token na página de [tokens da Atlassian](https://id.atlassian.com/manage-profile/security/api-tokens).
+
+### Perfil N1 ou N2
+
+- **N1 (padrão):** chamados do Service Desk (NSD) atribuídos a você, agrupados por status.
+- **N2:** tickets de desenvolvimento dos projetos Platz e Bahn atribuídos a você, agrupados por projeto. O SLA e a conversa com o cliente vêm do chamado NSD de origem, e o painel mostra quem é o N1 responsável.
+
+Troque em **Configurações... → Perfil de atendimento** (menu da bandeja). `ARGUS_PERFIL=n2` no `.env` define o padrão inicial.
 
 Use `iniciar_argus_oculto.vbs` para abrir sem deixar um terminal visível. `criar_atalho_desktop.vbs` cria um atalho na área de trabalho.
 

@@ -1,7 +1,11 @@
 """Fonte de notificação real - Jira Cloud REST API v3, Basic Auth (e-mail +
-API token, não senha). Cobre só o fluxo de atendimento (assignee = você mesmo),
-nos 4 status decididos em docs/ARQUITETURA.md - "Em Revisão", "Aguardando
-atendimento", "Aguardando cliente" e "Aguardando desenvolvimento".
+API token, não senha). Dois perfis (ver `JiraProvider.perfil` e
+docs/ARQUITETURA.md "Perfil N1/N2"):
+- N1: fluxo de atendimento (assignee = você mesmo), nos 4 status do NSD -
+  "Em Revisão", "Aguardando atendimento", "Aguardando cliente" e "Aguardando
+  desenvolvimento".
+- N2: tickets de desenvolvimento PLATZ/BAHN atribuídos a você, uma categoria
+  por projeto, com SLA/comentários/N1 lidos do chamado NSD de origem.
 
 Heurística de novidade (validada com o usuário, ver docs/ARQUITETURA.md): conta como
 novo desde a última vez que o ticket foi ABERTO (não desde a última checagem) -
@@ -24,12 +28,13 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 `/rest/api/3/project/NSD/statuses` - só valem PRA ESTE projeto (NSD); mudariam
 se um dia o fluxo for replicado em outro projeto Jira."""
 
+import os
 import time
 from typing import Callable
 
 import requests
 
-from ..modelos import Categoria, Ticket
+from ..modelos import PERFIL_N1, PERFIL_N2, Categoria, Ticket
 from ..persistencia import Persistencia
 from ..pontuacao import calcular_detalhamento_pontuacao, detectar_urgencia_no_texto
 from ..seguranca import mascarar
@@ -41,6 +46,20 @@ CATEGORIAS_STATUS = [
     ("cliente", "Aguardando Cliente", 10104),
     ("dev", "Aguardando Desenvolvimento", 10300),
 ]
+
+# 🔥 Perfil N2 (2026-10-01, pedido do usuário: "agora eu virei dev... os
+# tickets q o suporte n1 me manda, ja q sou o n2, cai em 2 boards diferentes")
+# - o N1 continua dono do chamado NSD; a automação cria o ticket de dev
+# (PLATZ/BAHN, boards 462/375) e ele é atribuído ao N2. Uma categoria por
+# PROJETO (escolha do usuário), com tudo que está atribuído e não concluído -
+# inclusive ticket sem origem no suporte (ex.: "Nova função" de backlog).
+PERFIL_PADRAO = PERFIL_N1
+CATEGORIAS_PROJETO_N2 = [
+    ("platz", "Platz", "PLATZ"),
+    ("bahn", "Bahn", "BAHN"),
+]
+CHAVES_CATEGORIAS_N2 = {chave for chave, _, _ in CATEGORIAS_PROJETO_N2}
+PROJETO_ATENDIMENTO = "NSD"
 
 TIPO_VINCULO_DEV = "Problem/Incident"
 AUTORES_AUTOMATICOS_IGNORADOS = {"Automation for Jira"}
@@ -76,10 +95,17 @@ class JiraProvider(NotificacaoProvider):
     def __init__(
         self, base_url: str, email: str, api_token: str, persistencia: Persistencia,
         descrever_imagem: Callable[[bytes], str] | None = None,
+        persistencia_configuracoes: Persistencia | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._auth = (email, api_token)
         self._persistencia = persistencia
+        # 🔥 De onde ler o perfil N1/N2 (2026-10-01) - por padrão a própria
+        # persistência do provider. A GAIA cria um provider de VOZ com
+        # persistência separada (`data/jira_voz_visto.json`), que nunca recebe
+        # as configurações do menu - ela passa aqui a persistência padrão do
+        # widget pra que voz e widget sigam sempre o MESMO perfil.
+        self._persistencia_configuracoes = persistencia_configuracoes or persistencia
         # 🔥 Gancho OPCIONAL de visão (2026-08-15) - o Argus em si não tem
         # dependência de LLM nenhuma (fica leve/usável standalone pelos colegas,
         # sem exigir chave de IA). Quem quiser analisar print sem descrição
@@ -92,6 +118,34 @@ class JiraProvider(NotificacaoProvider):
     @property
     def base_url(self) -> str:
         return self._base_url
+
+    @property
+    def perfil(self) -> str:
+        """Lido a CADA busca (não guardado no `__init__`) - trocar o perfil no
+        menu de Configurações vale no próximo ciclo, inclusive pro provider
+        de voz da GAIA, sem reiniciar nada. Ordem: config salva pelo menu >
+        `ARGUS_PERFIL` no `.env` > N1 (comportamento original, padrão pros
+        colegas que só fazem atendimento)."""
+        perfil = self._persistencia_configuracoes.obter_configuracoes().get("perfil")
+        perfil = perfil or os.environ.get("ARGUS_PERFIL", PERFIL_PADRAO)
+        return perfil if perfil in (PERFIL_N1, PERFIL_N2) else PERFIL_PADRAO
+
+    def _definicao_categorias(self) -> list:
+        """(chave, nome de exibição, JQL) de cada categoria do perfil atual."""
+        if self.perfil == PERFIL_N2:
+            return [
+                (chave, nome, f"project = {projeto} AND assignee = currentUser() "
+                              "AND statusCategory != Done ORDER BY updated DESC")
+                for chave, nome, projeto in CATEGORIAS_PROJETO_N2
+            ]
+        return [
+            (chave, nome, f"assignee = currentUser() AND status = {id_status} ORDER BY updated DESC")
+            for chave, nome, id_status in CATEGORIAS_STATUS
+        ]
+
+    @staticmethod
+    def _eh_chamado_atendimento(chave: str) -> bool:
+        return chave.startswith(f"{PROJETO_ATENDIMENTO}-")
 
     def _obter(self, caminho: str, params: dict | None = None, tentativas: int = 3) -> dict:
         """🔥 Retentativa em timeout/conexão (2026-08-23, achado em uso real:
@@ -146,6 +200,47 @@ class JiraProvider(NotificacaoProvider):
         if vinculado is None:
             return issue
         return self._obter_issue_completo(vinculado["key"])
+
+    def _chamado_origem(self, issue: dict) -> dict | None:
+        """Lado inverso do vínculo de 2 saltos (perfil N2): partindo do ticket
+        de dev, o chamado NSD que o originou. Filtra pelo PROJETO além do tipo
+        de vínculo porque um ticket de dev pode ter outros "Problem/Incident"
+        entre si. Vários NSDs do mesmo problema podem apontar pro mesmo
+        ticket de dev - usa o primeiro (o que a automação criou junto)."""
+        for vinculo in issue["fields"].get("issuelinks", []):
+            if vinculo["type"]["name"] != TIPO_VINCULO_DEV:
+                continue
+            vinculado = vinculo.get("inwardIssue") or vinculo.get("outwardIssue")
+            if vinculado and self._eh_chamado_atendimento(vinculado["key"]):
+                return vinculado
+        return None
+
+    def _resolver_estado_novidade(self, issue: dict) -> tuple:
+        """(estado atual pra comparar com o `visto`, issue NSD de origem ou
+        None). Decide pela CHAVE do ticket, não pelo perfil ativo - assim
+        `marcar_visto` grava o mesmo formato de estado que a busca compara,
+        mesmo se o perfil for trocado entre as duas chamadas.
+
+        - Chamado NSD (perfil N1): comportamento original, novidade checada
+          no ticket de dev vinculado, se houver.
+        - Ticket de dev (perfil N2): novidade no PRÓPRIO ticket + último
+          comentário do NSD de origem (pedido do usuário: comentário do
+          cliente/N1 no NSD também conta como novidade pro N2)."""
+        if self._eh_chamado_atendimento(issue["key"]):
+            return self._estado_atual(self._resolver_issue_para_novidade(issue)), None
+        atual = self._estado_atual(issue)
+        vinculo = self._chamado_origem(issue)
+        if vinculo is None:
+            return atual, None
+        origem = self._obter_issue_completo(vinculo["key"])
+        comentarios_origem = origem["fields"].get("comment", {}).get("comments", [])
+        ultimo = comentarios_origem[-1] if comentarios_origem else None
+        atual.update({
+            "origem_ultimo_comentario_id": ultimo["id"] if ultimo else None,
+            "origem_ultimo_comentario_autor_id": ultimo["author"]["accountId"] if ultimo else None,
+            "origem_ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
+        })
+        return atual, origem
 
     def _eh_autor_automatico(self, nome_exibicao: str) -> bool:
         return nome_exibicao in AUTORES_AUTOMATICOS_IGNORADOS
@@ -300,6 +395,22 @@ class JiraProvider(NotificacaoProvider):
             "tipo_solicitacao": (tipo_solicitacao_obj.get("requestType") or {}).get("name", ""),
         }
 
+    def _extrair_campos_detalhe_com_origem(self, campos: dict, origem: dict | None) -> dict:
+        """Perfil N2: Empresa/Plataforma/Tipo de solicitação só existem no NSD
+        (campos do Service Desk) - completa o que o ticket de dev não tem, e
+        acrescenta o chamado de origem e o N1 (responsável do NSD, quem fala
+        com o cliente - vem do Jira, nunca de um nome fixo no código)."""
+        detalhe = self._extrair_campos_detalhe(campos)
+        if origem is None:
+            return detalhe
+        detalhe_origem = self._extrair_campos_detalhe(origem["fields"])
+        for campo in ("empresa", "plataforma", "tipo_solicitacao"):
+            detalhe[campo] = detalhe[campo] or detalhe_origem[campo]
+        detalhe["chamado_origem"] = origem["key"]
+        detalhe["chamado_origem_url"] = f"{self._base_url}/browse/{origem['key']}"
+        detalhe["n1_responsavel"] = detalhe_origem["responsavel"]
+        return detalhe
+
     def _estado_atual(self, issue: dict) -> dict:
         campos = issue["fields"]
         comentarios = campos.get("comment", {}).get("comments", [])
@@ -353,13 +464,23 @@ class JiraProvider(NotificacaoProvider):
             return True, "prioridade_mudou"
         if visto.get("assignee_id") != atual["assignee_id"]:
             return True, "atribuido"
-        comentario_novo = atual["ultimo_comentario_id"] and atual["ultimo_comentario_id"] != visto.get("ultimo_comentario_id")
-        if comentario_novo:
-            autor_id = atual["ultimo_comentario_autor_id"]
-            autor_nome = atual["ultimo_comentario_autor_nome"] or ""
-            if autor_id != self._minha_account_id and not self._eh_autor_automatico(autor_nome):
-                return True, "comentario"
+        if self._comentario_novo_de_terceiro(visto, atual):
+            return True, "comentario"
+        if self._comentario_novo_de_terceiro(visto, atual, prefixo="origem_"):
+            return True, "comentario"
         return False, None
+
+    def _comentario_novo_de_terceiro(self, visto: dict, atual: dict, prefixo: str = "") -> bool:
+        """`prefixo="origem_"` checa o NSD de origem (perfil N2, ver
+        `_resolver_estado_novidade`) com a mesma regra do ticket principal:
+        comentário próprio ou de automação não conta. Estado sem essas
+        chaves (perfil N1) simplesmente nunca conta."""
+        id_atual = atual.get(f"{prefixo}ultimo_comentario_id")
+        if not id_atual or id_atual == visto.get(f"{prefixo}ultimo_comentario_id"):
+            return False
+        autor_id = atual.get(f"{prefixo}ultimo_comentario_autor_id")
+        autor_nome = atual.get(f"{prefixo}ultimo_comentario_autor_nome") or ""
+        return autor_id != self._minha_account_id and not self._eh_autor_automatico(autor_nome)
 
     def buscar_dados_brutos(self) -> list:
         """Parte cara desta classe (JQL x4 + 1 SLA por ticket + Visão/texto de
@@ -388,8 +509,7 @@ class JiraProvider(NotificacaoProvider):
         assim que a rede normalizar), sem derrubar o resto que já tinha
         dado certo."""
         dados = []
-        for chave_cat, nome_cat, id_status in CATEGORIAS_STATUS:
-            jql = f'assignee = currentUser() AND status = {id_status} ORDER BY updated DESC'
+        for chave_cat, nome_cat, jql in self._definicao_categorias():
             try:
                 issues = self._buscar_issues(jql)
             except requests.RequestException as e:
@@ -400,13 +520,19 @@ class JiraProvider(NotificacaoProvider):
                 chave_ticket = issue["key"]
                 try:
                     campos = issue["fields"]
-                    issue_novidade = self._resolver_issue_para_novidade(issue)
-                    atual = self._estado_atual(issue_novidade)
+                    atual, origem = self._resolver_estado_novidade(issue)
                     prioridade = (campos.get("priority") or {}).get("name", "")
 
                     texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
                     urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
-                    sla_info = self._obter_sla_info(chave_ticket)
+                    # 🔥 SLA só existe no chamado do Service Desk - ticket de
+                    # dev responde 404 no endpoint de SLA (confirmado contra a
+                    # instância real, 2026-10-01). No perfil N2 o SLA vem do
+                    # NSD de origem; ticket de dev sem origem fica sem SLA.
+                    if self._eh_chamado_atendimento(chave_ticket):
+                        sla_info = self._obter_sla_info(chave_ticket)
+                    else:
+                        sla_info = self._obter_sla_info(origem["key"]) if origem else None
                     detalhamento_pontuacao = calcular_detalhamento_pontuacao(
                         prioridade, urgencia_no_texto, sla_info,
                     )
@@ -421,7 +547,7 @@ class JiraProvider(NotificacaoProvider):
                         "detalhamento_pontuacao": detalhamento_pontuacao,
                         "urgencia_no_texto": urgencia_no_texto,
                         "atual": atual,
-                        "detalhe": self._extrair_campos_detalhe(campos),
+                        "detalhe": self._extrair_campos_detalhe_com_origem(campos, origem),
                         "sla_texto": (sla_info or {}).get("restante_texto", ""),
                         "sla_estourado": bool(sla_info and sla_info.get("breached")),
                         "sla_restante_millis": (sla_info or {}).get("restante_millis") if sla_info else None,
@@ -467,7 +593,10 @@ class JiraProvider(NotificacaoProvider):
             # categoria (a JQL acima só define QUAIS tickets entram, não a ordem
             # de exibição).
             tickets.sort(key=lambda t: t.pontuacao_foco, reverse=True)
-            categorias.append(Categoria(chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets))
+            categorias.append(Categoria(
+                chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets,
+                mostrar_status_na_lista=chave_cat in CHAVES_CATEGORIAS_N2,
+            ))
         return categorias
 
     def listar_categorias(self) -> list:
@@ -475,8 +604,7 @@ class JiraProvider(NotificacaoProvider):
 
     def marcar_visto(self, chave_ticket: str) -> None:
         issue = self._obter_issue_completo(chave_ticket)
-        issue_novidade = self._resolver_issue_para_novidade(issue)
-        estado = self._estado_atual(issue_novidade)
+        estado, _ = self._resolver_estado_novidade(issue)
         self._persistencia.salvar_estado_ticket(chave_ticket, estado)
 
     def obter_detalhes_completos(self, chave_ticket: str) -> dict:
@@ -490,15 +618,30 @@ class JiraProvider(NotificacaoProvider):
         que o usuário já cola manualmente, sem chamada extra de rede."""
         issue = self._obter_issue_completo(chave_ticket)
         campos = issue["fields"]
-        comentarios = campos.get("comment", {}).get("comments", [])
-        return {
-            "descricao": self._texto_plano_adf(campos.get("description")),
-            "comentarios": [
-                {
-                    "autor": (comentario.get("author") or {}).get("displayName", ""),
-                    "texto": self._texto_plano_adf(comentario.get("body")),
-                    "criado_em": comentario.get("created", ""),
-                }
-                for comentario in comentarios
-            ],
-        }
+        descricao = self._texto_plano_adf(campos.get("description"))
+        comentarios = self._comentarios_texto(campos)
+        # 🔥 Perfil N2 (2026-10-01) - a conversa com o cliente acontece no NSD
+        # de origem, não no ticket de dev. Junta a descrição e os comentários
+        # dele (marcados com a chave do NSD) pra análise ter o mesmo contexto
+        # que o N1 tem.
+        vinculo = None if self._eh_chamado_atendimento(chave_ticket) else self._chamado_origem(issue)
+        if vinculo is not None:
+            campos_origem = self._obter_issue_completo(vinculo["key"])["fields"]
+            descricao_origem = self._texto_plano_adf(campos_origem.get("description"))
+            descricao = f"{descricao}\n\n[Chamado de origem {vinculo['key']}]\n{descricao_origem}".strip()
+            comentarios_origem = [
+                {**c, "autor": f"{c['autor']} ({vinculo['key']})"}
+                for c in self._comentarios_texto(campos_origem)
+            ]
+            comentarios = sorted(comentarios + comentarios_origem, key=lambda c: c["criado_em"])
+        return {"descricao": descricao, "comentarios": comentarios}
+
+    def _comentarios_texto(self, campos: dict) -> list:
+        return [
+            {
+                "autor": (comentario.get("author") or {}).get("displayName", ""),
+                "texto": self._texto_plano_adf(comentario.get("body")),
+                "criado_em": comentario.get("created", ""),
+            }
+            for comentario in campos.get("comment", {}).get("comments", [])
+        ]

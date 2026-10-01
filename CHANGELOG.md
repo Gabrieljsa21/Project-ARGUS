@@ -10,6 +10,12 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+### Adicionado
+- **Perfil N2 (Platz e Bahn)** - novo seletor "Perfil de atendimento" no menu de Configurações. No N2, o Argus acompanha os tickets de desenvolvimento atribuídos a você nos projetos PLATZ e BAHN (boards 462 e 375), uma categoria por projeto, com o status de cada ticket na linha. O SLA, a empresa e a plataforma vêm do chamado NSD de origem; comentário do cliente ou do N1 nesse NSD conta como novidade; o painel de detalhes mostra o chamado de origem (link) e o N1 responsável; o botão "Analisar" inclui a conversa do NSD. Tickets sem origem no suporte também aparecem. O perfil N1 continua sendo o padrão. Ver `docs/ARQUITETURA.md`, seção "Perfil N1/N2".
+
+### Corrigido
+- Salvar o menu de Configurações reescrevia o dicionário inteiro e apagava opções que o dialog não conhecia. Agora mescla com o que já estava salvo.
+
 ## [0.7.0] - 2026-08-28
 
 ### Adicionado

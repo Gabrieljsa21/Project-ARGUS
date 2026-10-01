@@ -49,6 +49,7 @@ from .tema import (
     GAIA_GOLD, GAIA_GOLD_HOVER, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
     cor_com_alpha,
 )
+from ..modelos import PERFIL_N1, PERFIL_N2
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 
 LIMIAR_ARRASTAR_PIXELS = 6
@@ -1035,15 +1036,18 @@ class _DialogoConfiguracoes(QDialog):
     (`SpinboxCapsula`/`Switch`) - em vez de um `QFormLayout` cru com
     `QSpinBox`/`QCheckBox` nativos."""
 
-    def __init__(self, limite_atual, chacoalhada_ativa, parent=None):
+    def __init__(self, limite_atual, chacoalhada_ativa, parent=None, perfil_n2=None):
         super().__init__(parent)
         self.setWindowTitle("Configurações do Argus")
         self.setStyleSheet(f"background-color: {BG_COLOR};")
-        self.resize(380, 260)
+        self.resize(380, 360)
         self.limite_janelas_destacadas = limite_atual
         self.chacoalhada_ativa = chacoalhada_ativa
+        self.perfil_n2 = perfil_n2
 
         lay = QVBoxLayout(self)
+        if perfil_n2 is not None:
+            lay.addWidget(self._card_perfil(perfil_n2))
         lay.addWidget(self._card_limite(limite_atual))
         lay.addWidget(self._card_chacoalhada(chacoalhada_ativa))
         lay.addStretch(1)
@@ -1063,6 +1067,21 @@ class _DialogoConfiguracoes(QDialog):
         frame.setStyleSheet(f"background-color: {SURFACE_COLOR}; border-radius: 8px;")
         lay_frame = QVBoxLayout(frame)
         return frame, lay_frame
+
+    def _card_perfil(self, perfil_n2) -> QFrame:
+        """Perfil N1/N2 (2026-10-01, ver docs/ARQUITETURA.md "Perfil N1/N2") -
+        o Argus não sabe o que é Jira; só grava a escolha, quem interpreta é
+        o provider (`JiraProvider.perfil`)."""
+        frame, lay_frame = self._card()
+        lay_frame.addWidget(_titulo_secao("Perfil de atendimento"))
+        lay_frame.addWidget(_descricao(
+            "N1 acompanha os chamados do Service Desk atribuídos a você, por "
+            "status. N2 acompanha os tickets de desenvolvimento (Platz e "
+            "Bahn) atribuídos a você, com o SLA do chamado de origem."
+        ))
+        self._campo_perfil = Switch("N2 - Platz e Bahn", "N1 - Service Desk", marcado=perfil_n2)
+        lay_frame.addWidget(self._campo_perfil)
+        return frame
 
     def _card_limite(self, limite_atual) -> QFrame:
         frame, lay_frame = self._card()
@@ -1094,6 +1113,8 @@ class _DialogoConfiguracoes(QDialog):
     def _confirmar(self):
         self.limite_janelas_destacadas = self._campo_limite.value()
         self.chacoalhada_ativa = self._campo_chacoalhada.isChecked()
+        if self.perfil_n2 is not None:
+            self.perfil_n2 = self._campo_perfil.isChecked()
         self.accept()
 
 
@@ -1406,11 +1427,15 @@ class _PainelDetalhesTicket(QWidget):
             ("Responsável", ticket.responsavel, TEXT_COLOR),
             ("Tipo de solicitação", ticket.tipo_solicitacao, TEXT_COLOR),
             ("Status", ticket.status, TEXT_COLOR),
+            # 🔥 Perfil N2 (2026-10-01) - NSD que originou o ticket de dev
+            # (link clicável) e o N1 que mantém a conversa com o cliente.
+            ("Chamado de origem", ticket.chamado_origem, TEXT_COLOR, ticket.chamado_origem_url),
+            ("N1", ticket.n1_responsavel, TEXT_COLOR),
         ]
-        for rotulo, valor, cor_valor in campos:
+        for rotulo, valor, cor_valor, *url in campos:
             if not valor:
                 continue
-            layout_campos.addWidget(self._linha_campo(rotulo, valor, cor_valor))
+            layout_campos.addWidget(self._linha_campo(rotulo, valor, cor_valor, url[0] if url else None))
 
         # 🔥 Rolagem interna só quando o conteúdo passa do limite da área
         # útil do monitor (2026-08-15, ver argus_painel_detalhes_ticket.md,
@@ -1433,7 +1458,7 @@ class _PainelDetalhesTicket(QWidget):
 
         self._layout.addLayout(self._montar_linha_acoes())
 
-    def _linha_campo(self, rotulo, valor, cor_valor) -> QWidget:
+    def _linha_campo(self, rotulo, valor, cor_valor, url=None) -> QWidget:
         linha = QHBoxLayout()
         linha.setSpacing(6)
         w = QWidget()
@@ -1442,7 +1467,12 @@ class _PainelDetalhesTicket(QWidget):
         lbl_rotulo.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE))
         lbl_rotulo.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
         linha.addWidget(lbl_rotulo)
-        lbl_valor = QLabel(str(valor))
+        if url:
+            lbl_valor = QLabel(f'<a href="{url}" style="color:{GAIA_GOLD};">{valor}</a>')
+            lbl_valor.setTextFormat(Qt.RichText)
+            lbl_valor.setOpenExternalLinks(True)
+        else:
+            lbl_valor = QLabel(str(valor))
         lbl_valor.setWordWrap(True)
         lbl_valor.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE))
         lbl_valor.setStyleSheet(f"color: {cor_valor}; background: transparent; border: none;")
@@ -1951,7 +1981,7 @@ class ArgusWidget(QWidget):
 
         if len(categoria.tickets) <= MAX_LINHAS_VISIVEIS:
             for ticket in categoria.tickets:
-                self._layout_painel.addWidget(self._linha_ticket(ticket, largura))
+                self._layout_painel.addWidget(self._linha_ticket(ticket, largura, categoria.mostrar_status_na_lista))
             return
 
         area = QScrollArea()
@@ -1969,7 +1999,7 @@ class ArgusWidget(QWidget):
         layout_lista.setSpacing(4)
         layout_lista.setAlignment(Qt.AlignTop)
         for ticket in categoria.tickets:
-            layout_lista.addWidget(self._linha_ticket(ticket, largura))
+            layout_lista.addWidget(self._linha_ticket(ticket, largura, categoria.mostrar_status_na_lista))
         area.setWidget(conteudo)
 
         # 🔥 Guarda a referência (self._filtro_roda) - um QObject sem dono
@@ -2000,7 +2030,7 @@ class ArgusWidget(QWidget):
         legenda.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
         return legenda
 
-    def _linha_ticket(self, ticket, largura_disponivel) -> QWidget:
+    def _linha_ticket(self, ticket, largura_disponivel, mostrar_status=False) -> QWidget:
         peso = QFont.Bold if ticket.novo else QFont.Normal
         fonte = QFont(FONTE_BASE, TAMANHO_FONTE_TICKET, peso)
         sufixo = " ● NOVO" if ticket.novo else ""
@@ -2017,7 +2047,11 @@ class ArgusWidget(QWidget):
         # 🔥 Sufixo de SLA (2026-08-28) - entra na MESMA string que já elide
         # (como o "● NOVO" de sempre), então some primeiro se a linha for
         # curta demais pra caber tudo - mesma prioridade visual do resto.
-        resumo_elidido = metricas.elidedText(f"— {ticket.resumo}{sufixo}{_sufixo_sla(ticket)}", Qt.ElideRight, largura_resumo)
+        # 🔥 Status antes do resumo quando a categoria é por PROJETO (perfil
+        # N2, 2026-10-01) - o nome da categoria ("Platz"/"Bahn") não diz em
+        # que etapa do board o ticket está.
+        status = f"{ticket.status} · " if mostrar_status else ""
+        resumo_elidido = metricas.elidedText(f"— {status}{ticket.resumo}{sufixo}{_sufixo_sla(ticket)}", Qt.ElideRight, largura_resumo)
         linha = _LinhaTicket(ticket, resumo_elidido, fonte, self._ticket_clicado)
         linha.definir_selecionado(self._ticket_esta_aberto(ticket.chave))
         return linha
@@ -2055,14 +2089,30 @@ class ArgusWidget(QWidget):
         uso standalone (ver app.py); rodando embutido na GAIA, quem
         instanciar o `ArgusWidget` pode ligar isso na própria UI (ex.: um
         item de menu no Painel dela) do mesmo jeito."""
-        dialogo = _DialogoConfiguracoes(self._limite_janelas_destacadas, self._chacoalhada_ativa, self)
+        # Provider sem perfil (fonte que não é o Jira) não mostra o card.
+        perfil_atual = getattr(self._provider, "perfil", None)
+        dialogo = _DialogoConfiguracoes(
+            self._limite_janelas_destacadas, self._chacoalhada_ativa,
+            perfil_n2=None if perfil_atual is None else perfil_atual == PERFIL_N2, parent=self,
+        )
         if dialogo.exec() == QDialog.Accepted:
             self._limite_janelas_destacadas = dialogo.limite_janelas_destacadas
             self._chacoalhada_ativa = dialogo.chacoalhada_ativa
-            self._persistencia.salvar_configuracoes({
+            # 🔥 Mescla com o que já estava salvo (2026-10-01) - antes o dict
+            # era reescrito inteiro só com as opções que este dialog conhecia.
+            configuracoes = self._persistencia.obter_configuracoes()
+            configuracoes.update({
                 "limite_janelas_destacadas": self._limite_janelas_destacadas,
                 "chacoalhada_ativa": self._chacoalhada_ativa,
             })
+            perfil_novo = perfil_atual
+            if perfil_atual is not None:
+                perfil_novo = PERFIL_N2 if dialogo.perfil_n2 else PERFIL_N1
+                configuracoes["perfil"] = perfil_novo
+            self._persistencia.salvar_configuracoes(configuracoes)
+            if perfil_novo != perfil_atual:
+                self._fechar_painel()
+                self.atualizar()
 
     def _ticket_clicado(self, ticket):
         """Controle de instância (2026-08-15, ver
