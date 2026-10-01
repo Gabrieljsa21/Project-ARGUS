@@ -500,14 +500,24 @@ class JiraProvider(NotificacaoProvider):
     def _evento_mr(visto: dict, atual: dict) -> tuple:
         """(tipo, detalhe) do evento de MR mais importante desde o último
         `visto`, ou (None, ""). Ordem (pedido do usuário): aprovação nova >
-        mesclada > comentário novo. Estado antigo sem "mrs" (gravado antes
-        desta função existir) ou MRs desconhecidas num dos lados não geram
-        evento - a próxima vez que o ticket for aberto vira a linha de base.
+        mesclada > comentário novo.
+
+        Dois casos diferentes de "visto sem MRs conhecidas":
+        - SEM a chave "mrs" (estado gravado antes desta função existir): não
+          gera evento; `classificar` grava a linha de base em silêncio, pra
+          não disparar aprovações antigas de uma vez.
+        - `mrs: None` (a leitura falhou no momento em que o ticket foi
+          visto): compara com "nenhuma MR" (2026-10-01, caso real PLATZ-6862:
+          a linha de base silenciosa engoliria 2 comentários feitos na MR
+          platz.connectors#103 nesse intervalo). Melhor avisar algo antigo do
+          que perder algo novo.
+        MRs desconhecidas AGORA (falha neste ciclo) nunca geram evento.
         Limitação: o Jira só dá a CONTAGEM de comentários, então um
         comentário seu na MR também conta."""
-        antes, agora = visto.get("mrs"), atual.get("mrs")
-        if antes is None or agora is None:
+        agora = atual.get("mrs")
+        if "mrs" not in visto or agora is None:
             return None, ""
+        antes = visto["mrs"] or {}
         aprovacao = mesclada = comentario = None
         for identificador, mr in agora.items():
             anterior = antes.get(identificador) or {"aprovadores": [], "status": None, "comentarios": 0}
@@ -672,14 +682,15 @@ class JiraProvider(NotificacaoProvider):
                 visto = persistencia.obter_estado_ticket(tb["chave"])
                 novo, tipo_evento, detalhe_evento = self._classificar_evento(visto, tb["atual"])
                 # 🔥 Linha de base das MRs (2026-10-01): "visto" gravado antes
-                # das MRs existirem (ou num ciclo em que o painel de
-                # desenvolvimento falhou) não tem com o que comparar. Sem isso,
-                # uma persistência que só regrava o "visto" ao anunciar algo
-                # (a de voz da GAIA) nunca avisaria aprovação nenhuma. Grava as
-                # MRs atuais como base, em silêncio, sem mexer no resto do
-                # estado - a próxima mudança já conta.
+                # das MRs existirem não tem com o que comparar. Sem isso, uma
+                # persistência que só regrava o "visto" ao anunciar algo (a de
+                # voz da GAIA) nunca avisaria aprovação nenhuma. Grava as MRs
+                # atuais como base, em silêncio, sem mexer no resto do estado -
+                # a próxima mudança já conta. Só pra estado SEM a chave "mrs":
+                # `mrs: None` (leitura falhou ao ver o ticket) é comparado com
+                # "nenhuma MR" em `_evento_mr`, nunca absorvido aqui.
                 mrs_atuais = tb["atual"].get("mrs")
-                if visto is not None and visto.get("mrs") is None and mrs_atuais is not None:
+                if visto is not None and "mrs" not in visto and mrs_atuais is not None:
                     persistencia.salvar_estado_ticket(tb["chave"], {**visto, "mrs": mrs_atuais})
                 tickets.append(Ticket(
                     chave=tb["chave"],
