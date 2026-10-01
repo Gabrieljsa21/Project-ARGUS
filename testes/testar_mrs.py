@@ -114,7 +114,16 @@ def main():
     jira.falhar = True
     t = ticket()
     checar("falha no painel de desenvolvimento não inventa evento nem derruba o ticket", not t.novo and t.mrs == [])
+    # Caso real PLATZ-6862: o ticket é visto num ciclo em que a leitura das
+    # MRs falha (grava mrs: None); depois disso a MR ganha comentário.
+    provider.marcar_visto("PLATZ-1")
+    checar("visto durante a falha grava mrs: None", persistencia.obter_estado_ticket("PLATZ-1").get("mrs", "ausente") is None)
     jira.falhar = False
+    jira.gitlab["commentCount"] = 9
+    t = ticket()
+    checar("depois da falha, compara com 'nenhuma MR' em vez de engolir em silêncio", t.novo and t.tipo_evento == "mr_aprovada")
+    checar("mrs: None não vira linha de base silenciosa", persistencia.obter_estado_ticket("PLATZ-1").get("mrs") is None)
+    provider.marcar_visto("PLATZ-1")
 
     estado = persistencia.obter_estado_ticket("PLATZ-1")
     estado.pop("mrs")

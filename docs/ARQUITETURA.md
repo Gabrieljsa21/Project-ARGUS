@@ -170,11 +170,20 @@ antes de comentário no ticket. `_classificar_evento` passou a devolver
 também o detalhe (`Ticket.detalhe_evento`, ex.: "aprovada por Rafael (2
 aprovações)") pra fala da GAIA dizer quem aprovou.
 
-**Linha de base:** "visto" gravado antes desta função (ou num ciclo em que o
-painel falhou) não tem `mrs`. `classificar` grava as MRs atuais como base,
-em silêncio. Sem isso, a persistência de voz da GAIA, que só regrava o
-"visto" ao anunciar algo, nunca chegaria a ter base e nunca avisaria uma
-aprovação.
+**Linha de base:** "visto" gravado antes desta função não tem a chave
+`mrs`. `classificar` grava as MRs atuais como base, em silêncio. Sem isso, a
+persistência de voz da GAIA, que só regrava o "visto" ao anunciar algo,
+nunca chegaria a ter base e nunca avisaria uma aprovação.
+
+**`mrs: None` não é linha de base (corrigido no mesmo dia, caso real
+PLATZ-6862):** quando a leitura das MRs falha no momento em que o ticket é
+visto, o estado fica com `mrs: None`. A 1ª versão tratava isso igual ao
+estado antigo e absorvia em silêncio o que acontecesse depois: os 2
+comentários na MR `platz.connectors#103` sumiriam sem aviso. Agora
+`_evento_mr` compara `mrs: None` com "nenhuma MR" (o que já existe vira
+aviso uma vez, até o ticket ser aberto de novo); só a chave AUSENTE vira
+linha de base silenciosa. Melhor avisar algo antigo do que perder algo
+novo.
 
 **Painel de detalhes:** uma linha "MR" por MR, com link, status legível
 (`STATUS_MR_LEGIVEL`, montado no provider pra o `core/` não saber de Jira),
