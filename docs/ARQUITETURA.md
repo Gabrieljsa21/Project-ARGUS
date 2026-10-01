@@ -19,7 +19,7 @@ Substituir a notificação de e-mail crua do Jira (assunto + corpo cheio de roda
 ## Escopo
 
 - **Só Jira.** Não cobre e-mail, Documentos, Pagamentos, Pulse, Reuniões (essas ficam com a GAIA, se um dia existirem - fora deste projeto).
-- **Só chamados atribuídos ao usuário** (`assignee = currentUser()`). Chamados de melhoria onde o usuário é só reporter/watcher (encaminhados ao Time de Produtos) ficam de fora - não são responsabilidade dele.
+- **Só chamados atribuídos ao usuário** (`assignee = currentUser()`). No perfil N2 (ver seção "Perfil N1/N2"), isso vale para os tickets de desenvolvimento PLATZ/BAHN, não para o NSD. Chamados de melhoria onde o usuário é só reporter/watcher (encaminhados ao Time de Produtos) ficam de fora - não são responsabilidade dele.
 - **Público:** colegas da Nordware que usam a mesma instância Jira (`nordwareservices.atlassian.net`), sem querer a GAIA completa.
 
 ## Fluxo de status rastreado
@@ -90,6 +90,59 @@ baixo (`//`) - "-4h30m estourado" vira `(-4h)`, não `(-5h)`. Entra na MESMA
 string que já elide (junto do "● NOVO" de sempre, `core/widget.py::
 ArgusWidget._linha_ticket`), então some primeiro se a linha for curta
 demais.
+
+## Perfil N1/N2 (2026-10-01)
+
+Pedido do usuário: "agora eu virei dev, e estou instruindo o novato q entrou
+no meu local, o meu novo papel será resolver os problemas q chegam em vez de
+so analisar. [...] Os tickets q o suporte n1 me manda, ja q sou o n2, cai em
+2 boards diferentes" (PLATZ board 462, BAHN board 375). O contrato de
+expectativa novo descreve o N2 como quem aprofunda a investigação e corrige
+o código, enquanto o N1 mantém o chamado e a comunicação com o cliente.
+
+**Fluxo real, confirmado contra a instância (2026-10-01):** o N1 é o
+responsável pelo NSD e o leva para "Aguardando desenvolvimento"; a automação
+cria o ticket de dev (rótulo `servicedesk-ticket`, vínculo "Problem/Incident",
+"This work item causes NSD-…") e ele é atribuído ao N2. O NSD continua com o
+N1, por isso a JQL do perfil N1 (`assignee = currentUser()` no NSD) deixava
+de mostrar o trabalho do N2. Os dois boards têm o mesmo fluxo (Impedido,
+Disponível = Pronto/Reaberto/Refinement, Em Andamento, Code Review, Merge,
+Check Production, Concluído = Finalizado/Cancelado). O filtro do board 462
+aponta para a chave antiga `MKTIT`, mas o projeto é o PLATZ; a JQL do Argus
+usa a chave do projeto, não o filtro do board.
+
+**Decisões (escolhas do usuário):**
+
+| Ponto | Decisão |
+|---|---|
+| NSD x N2 | Alternável no menu de Configurações (`perfil`: `n1`/`n2`), sem misturar as duas visões. Padrão N1, para os colegas que só fazem atendimento. |
+| Agrupamento | Uma categoria por projeto (Platz, Bahn). A linha mostra `status · resumo` (`Categoria.mostrar_status_na_lista`). |
+| Escopo | `project = X AND assignee = currentUser() AND statusCategory != Done`, inclusive ticket sem origem no suporte (ex.: "Nova função" de backlog). |
+| SLA | Só existe no NSD: o endpoint de SLA responde 404 para o ticket de dev. O SLA vem do NSD de origem; ticket sem origem fica sem SLA (a pontuação usa só prioridade e urgência). |
+| Novidade | Estado do PRÓPRIO ticket de dev + último comentário do NSD de origem (`origem_ultimo_comentario_*`). Comentário próprio ou de automação não conta, mesma regra do ticket principal (`_comentario_novo_de_terceiro`). |
+| Detalhe | "Chamado de origem" (link) e "N1" (responsável do NSD, lido do Jira, nunca um nome fixo). Empresa/Plataforma/Tipo de solicitação são completados pelo NSD. |
+| Analisar | `obter_detalhes_completos` junta descrição e comentários do NSD (autor marcado com a chave do NSD), em ordem cronológica. |
+
+**Onde o perfil é lido:** `JiraProvider.perfil`, a CADA busca (config salva
+> `ARGUS_PERFIL` > `n1`), então trocar no menu vale no próximo ciclo sem
+reiniciar. O provider de voz da GAIA usa uma persistência própria
+(`data/jira_voz_visto.json`), por isso recebe `persistencia_configuracoes` (a
+persistência padrão do widget) para seguir o mesmo perfil. As constantes
+`PERFIL_N1`/`PERFIL_N2` ficam em `modelos.py` porque o `core/` grava a
+escolha e o provider interpreta; o `core/` continua sem saber o que é Jira, e
+o card do menu só aparece se o provider expuser `perfil`.
+
+**Estado de novidade decidido pela CHAVE, não pelo perfil**
+(`_resolver_estado_novidade`): NSD usa o fluxo original (novidade no ticket
+de dev vinculado), ticket de dev usa o fluxo N2. Assim `marcar_visto` grava o
+mesmo formato que a busca compara, mesmo se o perfil mudar entre as duas
+chamadas.
+
+**Correção junto:** `ArgusWidget.abrir_configuracoes` reescrevia o dict de
+configurações inteiro só com as chaves que o dialog conhecia; agora mescla
+com o que já estava salvo.
+
+Ver `testes/testar_perfil_n2.py` (offline, Jira falso).
 
 ## Regra de "novidade"
 
