@@ -30,6 +30,7 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 se um dia o fluxo for replicado em outro projeto Jira."""
 
 import time
+from datetime import datetime
 from typing import Callable
 
 import requests
@@ -76,7 +77,12 @@ COLUNAS_N2 = [
 ]
 CHAVE_OUTROS_N2 = "outros"
 CHAVES_COM_STATUS_NA_LISTA = {c for c, _, _, mostrar in COLUNAS_N2 if mostrar} | {CHAVE_OUTROS_N2}
-PROJETO_ATENDIMENTO = "NSD"
+# 🔥 Projetos de atendimento (N1), 2026-10-08 - antes só NSD. BSD (TI Service
+# Desk) e NPSD (Nordware Project Service Desk) têm os MESMOS status, vínculo
+# "Problem/Incident" com PLATZ/BAHN, SLA "Time to resolution" e campos de
+# empresa/plataforma (confirmado contra a instância real); sem eles, um ticket
+# de dev aberto a partir de BSD/NPSD ficava sem chamado de origem no perfil N2.
+PROJETOS_ATENDIMENTO = ("NSD", "BSD", "NPSD")
 
 TIPO_VINCULO_DEV = "Problem/Incident"
 AUTORES_AUTOMATICOS_IGNORADOS = {"Automation for Jira"}
@@ -115,6 +121,11 @@ PRIORIDADES_CRITICAS = {"Highest", "High"}
 # própria tela do Jira usa, sem documentação pública: qualquer falha nela
 # deixa as MRs "desconhecidas" naquele ciclo, nunca derruba o ticket.
 STATUS_MR_LEGIVEL = {"OPEN": "Aberta", "MERGED": "Mesclada", "DECLINED": "Recusada"}
+
+# Tamanho do trecho de comentário guardado no estado pro log de mudanças
+# (ver `_descrever_mudancas`) - só pra reconhecer o comentário, não pra lê-lo
+# inteiro (o Jira continua sendo o lugar pra isso).
+TAMANHO_TRECHO_COMENTARIO = 160
 
 
 class JiraProvider(NotificacaoProvider):
@@ -173,7 +184,7 @@ class JiraProvider(NotificacaoProvider):
 
     @staticmethod
     def _eh_chamado_atendimento(chave: str) -> bool:
-        return chave.startswith(f"{PROJETO_ATENDIMENTO}-")
+        return chave.split("-", 1)[0] in PROJETOS_ATENDIMENTO
 
     def _obter(self, caminho: str, params: dict | None = None, tentativas: int = 3) -> dict:
         """🔥 Retentativa em timeout/conexão (2026-08-23, achado em uso real:
@@ -264,9 +275,11 @@ class JiraProvider(NotificacaoProvider):
         comentarios_origem = origem["fields"].get("comment", {}).get("comments", [])
         ultimo = comentarios_origem[-1] if comentarios_origem else None
         atual.update({
+            "origem_chave": origem["key"],
             "origem_ultimo_comentario_id": ultimo["id"] if ultimo else None,
             "origem_ultimo_comentario_autor_id": ultimo["author"]["accountId"] if ultimo else None,
             "origem_ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
+            "origem_ultimo_comentario_trecho": self._trecho_comentario(ultimo),
         })
         return atual, origem
 
@@ -439,6 +452,15 @@ class JiraProvider(NotificacaoProvider):
         detalhe["n1_responsavel"] = detalhe_origem["responsavel"]
         return detalhe
 
+    @classmethod
+    def _trecho_comentario(cls, comentario: dict | None) -> str:
+        if not comentario:
+            return ""
+        texto = " ".join(cls._texto_plano_adf(comentario.get("body")).split())
+        if len(texto) > TAMANHO_TRECHO_COMENTARIO:
+            texto = texto[:TAMANHO_TRECHO_COMENTARIO].rstrip() + "..."
+        return texto
+
     def _estado_atual(self, issue: dict) -> dict:
         campos = issue["fields"]
         comentarios = campos.get("comment", {}).get("comments", [])
@@ -454,9 +476,13 @@ class JiraProvider(NotificacaoProvider):
             "status": campos["status"]["name"],
             "prioridade": (campos.get("priority") or {}).get("name"),
             "assignee_id": (campos.get("assignee") or {}).get("accountId"),
+            # Nome e trecho só alimentam o log de mudanças (`_descrever_mudancas`),
+            # nunca a decisão de novidade (que compara ids).
+            "assignee_nome": (campos.get("assignee") or {}).get("displayName", ""),
             "ultimo_comentario_id": ultimo["id"] if ultimo else None,
             "ultimo_comentario_autor_id": ultimo["author"]["accountId"] if ultimo else None,
             "ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
+            "ultimo_comentario_trecho": self._trecho_comentario(ultimo),
             "mrs": self._mrs_do_issue(issue),
         }
 
@@ -580,6 +606,67 @@ class JiraProvider(NotificacaoProvider):
             return True, "comentario", ""
         return False, None, ""
 
+    def _descrever_mudancas(self, visto: dict | None, atual: dict) -> list:
+        """Log legível de TUDO que mudou desde o último `visto` (2026-10-08,
+        pedido do usuário: "to recebendo notificacao q ele foi atualizado, mas
+        n sei oq exatamente aconteceu") - diferente de `_classificar_evento`,
+        que para no primeiro motivo, aqui entram todos, na mesma ordem de
+        importância. Puro, sem rede: o status mudado por você também aparece
+        (só não vira aviso, ver `_classificar_evento`). Estado gravado antes
+        dos campos de nome/trecho existirem cai num texto genérico."""
+        if visto is None:
+            return ["Ticket novo na sua fila"]
+        itens = []
+        if visto.get("prioridade") != atual["prioridade"]:
+            itens.append(f"Prioridade: {visto.get('prioridade') or '-'} → {atual['prioridade'] or '-'}")
+        if visto.get("status") != atual["status"]:
+            itens.append(f"Status: {visto.get('status') or '-'} → {atual['status']}")
+        if visto.get("assignee_id") != atual["assignee_id"]:
+            novo_responsavel = atual.get("assignee_nome") or "ninguém"
+            if "assignee_nome" in visto:
+                itens.append(f"Responsável: {visto['assignee_nome'] or 'ninguém'} → {novo_responsavel}")
+            else:
+                itens.append(f"Responsável alterado para {novo_responsavel}")
+        itens.extend(self._mudancas_mr(visto, atual))
+        # Cada comentário diz em qual ticket foi feito e o nível dele (N1 =
+        # chamado de atendimento, N2 = ticket de dev), porque o comentário
+        # pode vir do ticket da lista, do dev vinculado (perfil N1) ou do NSD
+        # de origem (perfil N2).
+        for prefixo in ("", "origem_"):
+            if self._comentario_novo_de_terceiro(visto, atual, prefixo=prefixo):
+                autor = atual.get(f"{prefixo}ultimo_comentario_autor_nome") or "alguém"
+                trecho = atual.get(f"{prefixo}ultimo_comentario_trecho")
+                chave = atual.get(f"{prefixo}chave")
+                onde = f" no {chave} ({'N1' if self._eh_chamado_atendimento(chave) else 'N2'})" if chave else ""
+                itens.append(f"Comentário novo de {autor}{onde}" + (f': "{trecho}"' if trecho else ""))
+        return itens
+
+    @staticmethod
+    def _mudancas_mr(visto: dict, atual: dict) -> list:
+        """Mesmas regras de `_evento_mr` (estado sem a chave "mrs" ou MRs
+        desconhecidas agora não geram nada), mas uma linha por MR e por
+        mudança, em vez de só a mais importante."""
+        agora = atual.get("mrs")
+        if "mrs" not in visto or agora is None:
+            return []
+        antes = visto["mrs"] or {}
+        itens = []
+        for identificador, mr in agora.items():
+            anterior = antes.get(identificador)
+            if anterior is None:
+                itens.append(f"MR {mr['rotulo']} vinculada")
+                anterior = {"aprovadores": [], "status": "OPEN", "comentarios": 0}
+            novos = [a for a in mr["aprovadores"] if a not in anterior.get("aprovadores", [])]
+            if novos:
+                itens.append(f"MR {mr['rotulo']} aprovada por {' e '.join(novos)}")
+            if mr["status"] != anterior.get("status"):
+                itens.append(f"MR {mr['rotulo']}: {mr.get('status_legivel') or mr['status']}")
+            diferenca = mr["comentarios"] - (anterior.get("comentarios") or 0)
+            if diferenca > 0:
+                plural = "s" if diferenca != 1 else ""
+                itens.append(f"MR {mr['rotulo']}: {diferenca} comentário{plural} novo{plural}")
+        return itens
+
     def _comentario_novo_de_terceiro(self, visto: dict, atual: dict, prefixo: str = "") -> bool:
         """`prefixo="origem_"` checa o NSD de origem (perfil N2, ver
         `_resolver_estado_novidade`) com a mesma regra do ticket principal:
@@ -681,6 +768,14 @@ class JiraProvider(NotificacaoProvider):
             for tb in tickets_brutos:
                 visto = persistencia.obter_estado_ticket(tb["chave"])
                 novo, tipo_evento, detalhe_evento = self._classificar_evento(visto, tb["atual"])
+                # Log do botão "Log" do painel de detalhes: o que está
+                # pendente agora, ou o que gerou o último aviso já visto
+                # (gravado por `marcar_visto`).
+                if novo:
+                    mudancas, mudancas_vistas_em = self._descrever_mudancas(visto, tb["atual"]), ""
+                else:
+                    ultimas = (visto or {}).get("ultimas_mudancas") or {}
+                    mudancas, mudancas_vistas_em = ultimas.get("itens", []), ultimas.get("vistas_em", "")
                 # 🔥 Linha de base das MRs (2026-10-01): "visto" gravado antes
                 # das MRs existirem não tem com o que comparar. Sem isso, uma
                 # persistência que só regrava o "visto" ao anunciar algo (a de
@@ -702,6 +797,8 @@ class JiraProvider(NotificacaoProvider):
                     novo=novo,
                     tipo_evento=tipo_evento,
                     detalhe_evento=detalhe_evento,
+                    mudancas=mudancas,
+                    mudancas_vistas_em=mudancas_vistas_em,
                     mrs=list((tb["atual"].get("mrs") or {}).values()),
                     pontuacao_foco=tb["pontuacao_foco"],
                     detalhamento_pontuacao=tb.get("detalhamento_pontuacao"),
@@ -726,8 +823,20 @@ class JiraProvider(NotificacaoProvider):
         return self.classificar(self.buscar_dados_brutos())
 
     def marcar_visto(self, chave_ticket: str) -> None:
+        """Grava o estado atual como visto e guarda junto o log do que mudou
+        desde o visto anterior (`ultimas_mudancas`), pro botão "Log" continuar
+        mostrando o motivo do último aviso depois que a novidade some. Se nada
+        mudou, mantém o log anterior."""
         issue = self._obter_issue_completo(chave_ticket)
         estado, _ = self._resolver_estado_novidade(issue)
+        visto = self._persistencia.obter_estado_ticket(chave_ticket)
+        mudancas = self._descrever_mudancas(visto, estado)
+        if mudancas:
+            estado["ultimas_mudancas"] = {
+                "itens": mudancas, "vistas_em": datetime.now().isoformat(timespec="minutes"),
+            }
+        elif visto and visto.get("ultimas_mudancas"):
+            estado["ultimas_mudancas"] = visto["ultimas_mudancas"]
         self._persistencia.salvar_estado_ticket(chave_ticket, estado)
 
     def obter_detalhes_completos(self, chave_ticket: str) -> dict:

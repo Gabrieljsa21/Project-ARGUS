@@ -138,6 +138,18 @@ de dev vinculado), ticket de dev usa o fluxo N2. Assim `marcar_visto` grava o
 mesmo formato que a busca compara, mesmo se o perfil mudar entre as duas
 chamadas.
 
+**Chamado de atendimento = NSD, BSD ou NPSD (2026-10-08):** a 1ª versão só
+reconhecia o NSD (`_eh_chamado_atendimento`), e um ticket de dev aberto a
+partir de outro Service Desk ficava "sem origem" no perfil N2: sem SLA,
+empresa ou plataforma, e comentário do cliente/N1 nele não virava aviso. BSD
+(TI Service Desk) e NPSD (Nordware Project Service Desk) têm os mesmos IDs de
+status, o mesmo vínculo "Problem/Incident" com PLATZ/BAHN, o mesmo SLA "Time
+to resolution" e os mesmos campos de empresa/plataforma/tipo de solicitação
+(confirmado contra a instância real; o NPSD concentra a maior parte dos
+vínculos com BAHN). Por isso entram em `PROJETOS_ATENDIMENTO` sem nenhum
+outro ajuste. Onde esta seção diz "NSD", vale para os três. A JQL do perfil
+N1 filtra por ID de status, sem projeto, então já incluía BSD/NPSD.
+
 **Correção junto:** `ArgusWidget.abrir_configuracoes` reescrevia o dict de
 configurações inteiro só com as chaves que o dialog conhecia; agora mescla
 com o que já estava salvo.
@@ -224,6 +236,18 @@ Pedido do usuário: "quando a mudança for apenas de status realizada por mim, n
 Pro vínculo de 2 saltos ("Aguardando desenvolvimento"), o changelog é consultado no MESMO issue usado pra novidade (o ticket vinculado de dev, não o NSD original) - por isso `_estado_atual` agora guarda também a `chave` do issue que gerou aquele estado, não só os campos comparados.
 
 A checagem de autor só suprime o tipo de evento `"status_mudou"` - se a MESMA atualização também trouxe outro evento (prioridade crítica, reatribuição, comentário de terceiro), esse outro evento ainda conta como novidade normalmente.
+
+### Log de mudanças: botão "Log" do painel de detalhes (2026-10-08)
+
+Pedido do usuário: "to recebendo notificacao q ele foi atualizado, mas n sei oq exatamente aconteceu". O aviso (`tipo_evento`) carrega só o motivo principal, e o painel de detalhes mostrava o estado atual, nunca o que mudou.
+
+- `JiraProvider._descrever_mudancas(visto, atual)` compara o mesmo `visto` x `atual` da regra de novidade e devolve uma linha legível por mudança, todas (não só a primeira), na mesma ordem de importância: prioridade, status, responsável, MRs (uma linha por MR e por mudança, `_mudancas_mr`, com as mesmas regras de linha de base de `_evento_mr`), comentário de terceiro no ticket e no NSD de origem (autor, chave do ticket com o nível - N1 para chamado de atendimento, N2 para ticket de dev - e trecho de até 160 caracteres). É puro, sem rede: status mudado por você aparece no log, só não vira aviso.
+- Para isso o estado gravado ganhou `assignee_nome`, `ultimo_comentario_trecho` e `origem_ultimo_comentario_trecho`. Nenhum deles entra na decisão de novidade (que continua comparando ids). Estado antigo sem esses campos cai em texto genérico ("Responsável alterado para X", comentário sem trecho).
+- `classificar` preenche `Ticket.mudancas`: com `novo=True`, o que está pendente; senão, o log do último aviso já visto. `marcar_visto` grava esse log no estado (`ultimas_mudancas = {itens, vistas_em}`) antes de atualizar o visto, e mantém o anterior quando nada mudou. Assim o botão continua explicando o aviso depois que o "NOVO" some.
+- O painel de detalhes mostra o botão "Log" só quando há algo registrado; ele abre `_DialogoLogMudancas` (lista só leitura, com a data em que o aviso foi visto).
+- A persistência de voz da GAIA tem o próprio `visto` e não passa por `marcar_visto`, então o log dela não é usado; o do widget é independente.
+
+Coberto em `testes/testar_log_mudancas.py`.
 
 ## Pontuação de foco (implementado, 2026-08-15)
 
