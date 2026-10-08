@@ -92,6 +92,14 @@ class Ticket:
     # Complemento legível do `tipo_evento` (ex.: "aprovada por Fulano") -
     # hoje só os eventos de MR preenchem.
     detalhe_evento: str = ""
+    # 🔥 Log de mudanças pro botão "Log" do painel de detalhes (2026-10-08,
+    # pedido do usuário: "to recebendo notificacao q ele foi atualizado, mas
+    # n sei oq exatamente aconteceu") - TODAS as mudanças desde o último
+    # visto, em texto legível (ver JiraProvider._descrever_mudancas). Com
+    # `novo=True` é o que está pendente; depois de visto, é o que gerou o
+    # último aviso, e `mudancas_vistas_em` diz quando (ISO, vazio se pendente).
+    mudancas: list = field(default_factory=list)
+    mudancas_vistas_em: str = ""
 
 
 @dataclass

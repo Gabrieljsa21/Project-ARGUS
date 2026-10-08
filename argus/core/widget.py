@@ -30,6 +30,7 @@ duas). Botões/campos seguem o padrão visual da GAIA (`_BotaoIcone`, `Switch`,
 
 import os
 import webbrowser
+from datetime import datetime
 
 from PySide6.QtCore import (
     Qt, QTimer, QThread, Signal, QPointF, QPoint, QRect, QSize, QEvent, QObject,
@@ -767,6 +768,43 @@ class _DialogoRascunho(QDialog):
 
     def _copiar(self):
         QApplication.clipboard().setText(self._texto.toPlainText())
+
+
+class _DialogoLogMudancas(QDialog):
+    """O que gerou o aviso do ticket (2026-10-08, ver `Ticket.mudancas`) -
+    uma linha por mudança desde o último visto, só leitura."""
+
+    def __init__(self, ticket, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Log - {ticket.chave}")
+        self.setStyleSheet(f"background-color: {BG_COLOR};")
+        self.resize(420, 240)
+
+        lay = QVBoxLayout(self)
+        if ticket.mudancas_vistas_em:
+            try:
+                quando = datetime.fromisoformat(ticket.mudancas_vistas_em).strftime("%d/%m %H:%M")
+            except ValueError:
+                quando = ticket.mudancas_vistas_em
+            cabecalho = f"Último aviso, visto em {quando}:"
+        else:
+            cabecalho = "Mudanças desde a última vez que você abriu:"
+        lay.addWidget(_descricao(cabecalho))
+
+        self._texto = QTextEdit()
+        self._texto.setReadOnly(True)
+        self._texto.setPlainText("\n".join(f"• {item}" for item in ticket.mudancas))
+        self._texto.setStyleSheet(
+            f"background-color: {SURFACE_COLOR}; color: {TEXT_COLOR}; border: 1px solid {BORDA_SUTIL}; border-radius: 6px;"
+        )
+        lay.addWidget(self._texto, 1)
+
+        linha_botoes = QHBoxLayout()
+        linha_botoes.addStretch(1)
+        botao_fechar = _botao_estilizado("Fechar", preenchido=True)
+        botao_fechar.clicked.connect(self.accept)
+        linha_botoes.addWidget(botao_fechar)
+        lay.addLayout(linha_botoes)
 
 
 class _DialogoAvisoLimite(QDialog):
@@ -1542,6 +1580,13 @@ class _PainelDetalhesTicket(QWidget):
             self._botao_analisar = _botao_estilizado("Analisar")
             self._botao_analisar.clicked.connect(self._iniciar_analise)
             linha_botoes.addWidget(self._botao_analisar)
+
+        # 🔥 "Log" (2026-10-08, ver `Ticket.mudancas`) - o que gerou o aviso
+        # deste ticket. Só aparece quando há algo registrado.
+        if self._ticket.mudancas:
+            botao_log = _botao_estilizado("Log", cor=TEXT_DIM)
+            botao_log.clicked.connect(lambda: _DialogoLogMudancas(self._ticket, self).exec())
+            linha_botoes.addWidget(botao_log)
 
         linha_botoes.addStretch(1)
         return linha_botoes
