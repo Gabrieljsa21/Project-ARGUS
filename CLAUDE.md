@@ -16,7 +16,7 @@ documentação correspondente NO MESMO commit/PR - nunca fica pra depois:
 - `docs/ARQUITETURA.md` - qualquer decisão técnica nova ou correção de algo que o
   documento descrevia errado/desatualizado.
 - `README.md` - se mudar como usar/configurar o projeto.
-- `CHANGELOG.md` - resumo de alto nível sob `[Unreleased]`.
+- `CHANGELOG.md` - resumo de alto nível já sob a versão nova da PR (`## [X.Y.Z] - data`, PATCH se só corrige, MINOR se traz funcionalidade), nunca acumulado em `[Unreleased]`; atualizar a versão do `pyproject.toml` junto e criar a tag `vX.Y.Z` depois do merge.
 - `docs/TODO.md` - remover item quando implementado (nunca só marcar); item novo
   precisa vir com Prioridade/Complexidade/Status preenchidos.
 

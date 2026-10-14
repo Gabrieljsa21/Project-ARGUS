@@ -22,7 +22,7 @@ Manter em `0.x.x` enquanto o projeto ainda estiver evoluindo rapidamente.
 
 ## Versão = PR mesclado
 
-Uma versão nova é criada depois que o PR é mesclado, com a entrada correspondente do `CHANGELOG.md`. `[Unreleased]` fica disponível no topo só pro raro caso de anotar algo antes do PR fechar.
+A versão nova entra no próprio PR: a entrada do `CHANGELOG.md` já vai sob `## [X.Y.Z] - data`, junto com a versão do `pyproject.toml`, e a tag `vX.Y.Z` é criada depois do merge (regra desde 2026-10-14). `[Unreleased]` fica no topo, sempre vazio: a GAIA compara o primeiro `## [X.Y.Z]` do arquivo para avisar de atualização do Argus, então o que fica em `[Unreleased]` não aparece como versão nova.
 
 ## O que entra no CHANGELOG
 

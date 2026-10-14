@@ -10,6 +10,8 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-14
+
 ### Adicionado
 - **Botão "Log" no painel do ticket** - mostra o que gerou o aviso: todas as mudanças desde a última vez que você abriu o ticket (status, prioridade, responsável, MRs e comentários novos com autor, ticket de origem (N1 ou N2) e trecho), e não só o motivo principal. Depois de visto, o botão continua mostrando o último aviso e quando ele foi visto. Ver `docs/ARQUITETURA.md`, seção "Log de mudanças".
 - **Aviso de MR aprovada, mesclada ou comentada** - o Argus lê as MRs vinculadas a cada ticket pelo painel "Desenvolvimento" do Jira (GitLab e Gitea, sem credencial nova). Aprovação nova, MR mesclada ou comentário novo marcam o ticket como NOVO, e o painel de detalhes lista cada MR com link, status e quem aprovou. No Gitea só dá para saber mesclada/recusada, porque o Jira não recebe os revisores de lá. Ver `docs/ARQUITETURA.md`, seção "MRs vinculadas".
