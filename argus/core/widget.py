@@ -50,7 +50,7 @@ from .tema import (
     GAIA_GOLD, GAIA_GOLD_HOVER, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
     cor_com_alpha,
 )
-from ..modelos import PERFIL_N1, PERFIL_N2, perfil_configurado
+from ..modelos import PERFIL_N1, PERFIL_N2, perfil_configurado, texto_pontuacao
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 
 LIMIAR_ARRASTAR_PIXELS = 6
@@ -508,6 +508,14 @@ def _sufixo_sla(ticket) -> str:
     return f" ({horas}h)"
 
 
+# Linha extra do tooltip da pontuação pra quem não lembra o que a sigla quer
+# dizer (ver `Ticket.sigla_tipo`).
+TIPO_TICKET_LEGIVEL = {
+    "ST": "ST (servicedesk-ticket): correção de erro, vem antes de PS",
+    "PS": "PS (prioridade-semana): prioridade da semana, depois dos ST",
+}
+
+
 class _LinhaTicket(QWidget):
     """Uma linha de ticket na lista - campo INTEIRO clicável, com destaque
     sutil ao passar o mouse. Clique abre o painel de detalhes (2026-08-15,
@@ -548,7 +556,7 @@ class _LinhaTicket(QWidget):
         # escrever o NOME da prioridade (2026-08-15, "não precisa escrever
         # prioridade no nome, já tem legenda das cores") - a cor sozinha já
         # basta, a legenda no topo do painel explica o que cada uma significa.
-        pontuacao = QLabel(f"[{ticket.pontuacao_foco}]")
+        pontuacao = QLabel(texto_pontuacao(ticket))
         pontuacao.setObjectName("pontuacao_foco")
         pontuacao.setFont(fonte)
         pontuacao.setStyleSheet(f"color: {cor_texto}; background: transparent; border: none;")
@@ -598,6 +606,8 @@ class _LinhaTicket(QWidget):
             linhas.append(f"Piso por urgência aplicado: {detalhes.piso_urgencia_aplicado}")
         if detalhes.teto_aplicado:
             linhas.append(f"Limite aplicado: {detalhes.limite}")
+        if ticket.sigla_tipo:
+            linhas.append(TIPO_TICKET_LEGIVEL.get(ticket.sigla_tipo, ticket.sigla_tipo))
         return "<br>".join(linhas)
 
     def definir_selecionado(self, selecionado: bool):
@@ -2136,7 +2146,7 @@ class ArgusWidget(QWidget):
         # bastante pra caber inteiro) - a largura medida aqui é em cima do
         # texto PLANO (sem HTML), `_LinhaTicket` que monta o rich text de
         # verdade a partir do ticket.
-        prefixo_plano = f"[{ticket.pontuacao_foco}] {ticket.chave}  "
+        prefixo_plano = f"{texto_pontuacao(ticket)} {ticket.chave}  "
         metricas = QFontMetrics(fonte)
         largura_resumo = max(0, largura_disponivel - 30 - metricas.horizontalAdvance(prefixo_plano))
         # 🔥 Sufixo de SLA (2026-08-28) - entra na MESMA string que já elide

@@ -14,7 +14,7 @@ from argus.core.tema import BORDA_SUTIL, SURFACE_COLOR, TEXT_COLOR, aplicar_esti
 from argus.core.widget import _LinhaTicket
 from argus.modelos import Ticket
 from argus.pontuacao import calcular_detalhamento_pontuacao
-from argus.providers.jira_provider import JiraProvider  # noqa: F401 - valida o consumidor do detalhamento
+from argus.providers.jira_provider import JiraProvider, _sigla_tipo
 
 
 class TooltipPontuacaoTest(unittest.TestCase):
@@ -106,6 +106,44 @@ class TooltipPontuacaoTest(unittest.TestCase):
         self.assertNotIn("SLA restante", tooltip)
         self.assertIn("Limite aplicado: 100", tooltip)
         linha.close()
+
+    def test_rotulo_st_ps_vai_a_frente_da_pontuacao(self):
+        detalhes = calcular_detalhamento_pontuacao("High", False, None)
+        ticket = self._ticket(detalhes)
+        ticket.sigla_tipo = "ST"
+        linha = _LinhaTicket(ticket, "Resumo", QFont(), lambda t: None)
+
+        rotulo_pontuacao = linha.findChild(QLabel, "pontuacao_foco")
+        self.assertEqual("[ST - 75]", rotulo_pontuacao.text())
+        self.assertIn("correção de erro", rotulo_pontuacao.toolTip())
+        linha.close()
+
+    def test_st_vem_antes_de_ps_e_ps_antes_de_sem_rotulo(self):
+        self.assertEqual("ST", _sigla_tipo(["prioridade-semana", "servicedesk-ticket"]))
+        self.assertEqual("PS", _sigla_tipo(["outro", "prioridade-semana"]))
+        self.assertEqual("", _sigla_tipo([]))
+
+        provider = JiraProvider.__new__(JiraProvider)
+        provider._base_url = "https://jira.example"
+        provider._persistencia = None
+
+        class _PersistenciaVazia:
+            def obter_estado_ticket(self, chave):
+                return {}
+
+        def bruto(chave, pontuacao, sigla):
+            return {
+                "chave": chave, "resumo": chave, "status": "Pronto", "prioridade": "Medium",
+                "atualizado_em": "", "pontuacao_foco": pontuacao, "sigla_tipo": sigla,
+                "urgencia_no_texto": False, "atual": {}, "detalhe": {},
+                "sla_texto": "", "sla_estourado": False, "sla_restante_millis": None,
+            }
+
+        provider._classificar_evento = lambda visto, atual: (False, None, "")
+        brutos = [bruto("A-1", 95, ""), bruto("A-2", 90, "PS"), bruto("A-3", 30, "ST"), bruto("A-4", 60, "ST")]
+        categorias = provider.classificar([("disp", "Disponível", brutos)], _PersistenciaVazia())
+
+        self.assertEqual(["A-4", "A-3", "A-2", "A-1"], [t.chave for t in categorias[0].tickets])
 
     def test_tooltip_segue_a_paleta_em_vez_do_preto_padrao_do_qt(self):
         aplicar_estilo_global(self.app)
