@@ -10,6 +10,11 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-26
+
+### Adicionado
+- **Sigla ST/PS à frente da pontuação** - tickets com o rótulo `servicedesk-ticket` (correção de erro vinda do suporte) aparecem como `[ST - 85]` e os com `prioridade-semana` como `[PS - 60]`. Na lista, ST sempre vem antes de PS, e PS antes dos tickets sem rótulo; a pontuação de foco ordena dentro de cada grupo. Ver `docs/ARQUITETURA.md`, seção "Tipo do ticket: ST antes de PS".
+
 ## [0.8.0] - 2026-10-14
 
 ### Adicionado

@@ -101,9 +101,26 @@ CAMPO_TIPO_SOLICITACAO = "customfield_10007"
 # mostrar o ticket, agora a descrição/comentário/print alimentam a pontuação de
 # foco (ver pontuacao.py) e a detecção de urgência no texto livre.
 CAMPOS_ISSUE = (
-    "summary,status,priority,updated,assignee,reporter,comment,issuelinks,"
+    "summary,status,priority,updated,assignee,reporter,comment,issuelinks,labels,"
     f"description,attachment,{CAMPO_PLATAFORMA},{CAMPO_EMPRESA},{CAMPO_TIPO_SOLICITACAO}"
 )
+
+# 🔥 Tipo do ticket de dev pelo rótulo do Jira (2026-10-26, pedido do
+# usuário: "os ST tem q ser feito antes do PS, prioridade é deles, são
+# correções de erros"). `servicedesk-ticket` é posto pela automação que cria o
+# ticket de dev a partir do chamado; `prioridade-semana`, pela gestão. A ordem
+# desta tupla é a precedência na lista: ST, depois PS, depois sem rótulo.
+ROTULOS_TIPO_TICKET = (("servicedesk-ticket", "ST"), ("prioridade-semana", "PS"))
+
+
+def _sigla_tipo(rotulos: list) -> str:
+    return next((sigla for rotulo, sigla in ROTULOS_TIPO_TICKET if rotulo in rotulos), "")
+
+
+def _ordem_tipo(sigla: str) -> int:
+    siglas = [s for _, s in ROTULOS_TIPO_TICKET]
+    return siglas.index(sigla) if sigla in siglas else len(siglas)
+
 
 # 🔥 Prioridades que contam como "crítico" pra fala da GAIA (2026-08-15,
 # pedido do usuário: "critico pode considerar high tbm") - nomes reais do
@@ -741,6 +758,7 @@ class JiraProvider(NotificacaoProvider):
                         "prioridade": prioridade,
                         "atualizado_em": campos["updated"],
                         "pontuacao_foco": detalhamento_pontuacao.total,
+                        "sigla_tipo": _sigla_tipo(campos.get("labels") or []),
                         "detalhamento_pontuacao": detalhamento_pontuacao,
                         "urgencia_no_texto": urgencia_no_texto,
                         "atual": atual,
@@ -801,6 +819,7 @@ class JiraProvider(NotificacaoProvider):
                     mudancas_vistas_em=mudancas_vistas_em,
                     mrs=list((tb["atual"].get("mrs") or {}).values()),
                     pontuacao_foco=tb["pontuacao_foco"],
+                    sigla_tipo=tb.get("sigla_tipo", ""),
                     detalhamento_pontuacao=tb.get("detalhamento_pontuacao"),
                     urgencia_no_texto=tb["urgencia_no_texto"],
                     sla_texto=tb["sla_texto"],
@@ -811,8 +830,9 @@ class JiraProvider(NotificacaoProvider):
             # 🔥 Ordena por pontuação de foco (2026-08-15, pedido do usuário: "pra
             # eu saber qual focar") - maior pontuação primeiro, dentro de cada
             # categoria (a JQL acima só define QUAIS tickets entram, não a ordem
-            # de exibição).
-            tickets.sort(key=lambda t: t.pontuacao_foco, reverse=True)
+            # de exibição). ST antes de PS antes do resto (2026-10-26, ver
+            # `ROTULOS_TIPO_TICKET`); a pontuação ordena dentro de cada grupo.
+            tickets.sort(key=lambda t: (_ordem_tipo(t.sigla_tipo), -t.pontuacao_foco))
             categorias.append(Categoria(
                 chave=chave_cat, nome_exibicao=nome_cat, tickets=tickets,
                 mostrar_status_na_lista=chave_cat in CHAVES_COM_STATUS_NA_LISTA,

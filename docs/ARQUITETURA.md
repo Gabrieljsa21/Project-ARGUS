@@ -291,6 +291,25 @@ o Argus em si não tem dependência de LLM nenhuma, fica leve/usável pelos
 colegas sem chave de IA). Cache por anexo (`chave:id_do_anexo`, não por
 ticket) - print novo não reaproveita a análise do anexo antigo.
 
+### Tipo do ticket: ST antes de PS (2026-10-26)
+
+Pedido do usuário: "os ST tem q ser feito antes do PS, prioridade é deles,
+são correções de erros". Os tickets de dev carregam um rótulo do Jira
+(`labels`, conferido contra a instância real): `servicedesk-ticket` (posto
+pela automação que cria o ticket a partir do chamado, ver "Perfil N1/N2") ou
+`prioridade-semana` (prioridade da semana definida pela gestão).
+
+- **Exibição:** a sigla entra à frente da pontuação, `[ST - 85]` ou
+  `[PS - 60]`; sem nenhum dos dois rótulos continua `[85]`
+  (`modelos.texto_pontuacao`, usado no rótulo e na medida de largura da
+  linha). O tooltip da pontuação ganha uma linha explicando a sigla.
+- **Ordem:** dentro de cada categoria, ST vem antes de PS e PS antes de
+  ticket sem rótulo; a pontuação ordena dentro de cada grupo
+  (`ROTULOS_TIPO_TICKET` em `jira_provider.py`, a ordem da tupla é a
+  precedência). Ticket com os dois rótulos conta como ST.
+- A pontuação em si não muda: o tipo é um critério de ordem à parte, para um
+  PS High nunca passar à frente de um ST Low por soma de pontos.
+
 ## Cores de prioridade (implementado, 2026-08-15)
 
 `core/tema.py::CORES_PRIORIDADE` - Highest `#FF5C5C`, High `#FF9F43`, Medium

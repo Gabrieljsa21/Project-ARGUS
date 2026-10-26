@@ -58,6 +58,11 @@ class Ticket:
     # o valor neutro (prioridade "Medium") usado quando ainda não foi calculado.
     pontuacao_foco: int = 50
     detalhamento_pontuacao: DetalhamentoPontuacao | None = None
+    # 🔥 "ST" (rótulo `servicedesk-ticket`, correção de erro) ou "PS"
+    # (`prioridade-semana`), vazio sem nenhum dos dois (2026-10-26, ver
+    # ROTULOS_TIPO_TICKET em jira_provider.py). Vai à frente da pontuação na
+    # linha, `[ST - 85]`, e ST sempre vem antes de PS na lista.
+    sigla_tipo: str = ""
     urgencia_no_texto: bool = False
     # 🔥 Detalhe pro painel de detalhes (2026-08-15, pedido do usuário: "abra
     # um modal a direita, com as informações mais detalhadas do ticket") - só
@@ -100,6 +105,13 @@ class Ticket:
     # último aviso, e `mudancas_vistas_em` diz quando (ISO, vazio se pendente).
     mudancas: list = field(default_factory=list)
     mudancas_vistas_em: str = ""
+
+
+def texto_pontuacao(ticket: "Ticket") -> str:
+    """`[ST - 85]`/`[PS - 85]` com rótulo de tipo, `[85]` sem."""
+    if ticket.sigla_tipo:
+        return f"[{ticket.sigla_tipo} - {ticket.pontuacao_foco}]"
+    return f"[{ticket.pontuacao_foco}]"
 
 
 @dataclass
