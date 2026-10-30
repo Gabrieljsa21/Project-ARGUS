@@ -49,7 +49,7 @@ class _JiraFalso:
     def obter(self, caminho, params=None, tentativas=3):
         if caminho == "/rest/api/3/search/jql":
             jql = params["jql"]
-            if "project in (PLATZ, BAHN)" not in jql:
+            if "project in (PLATZ, BAHN, SDP)" not in jql:
                 return {"issues": []}  # JQL do perfil N1
             if "status in (13157)" in jql:
                 return {"issues": [self.dev]}

@@ -4,7 +4,7 @@ docs/ARQUITETURA.md "Perfil N1/N2"):
 - N1: fluxo de atendimento (assignee = você mesmo), nos 4 status do NSD -
   "Em Revisão", "Aguardando atendimento", "Aguardando cliente" e "Aguardando
   desenvolvimento".
-- N2: tickets de desenvolvimento PLATZ/BAHN atribuídos a você, por coluna
+- N2: tickets de desenvolvimento PLATZ/BAHN/SDP atribuídos a você, por coluna
   do board (Disponível, Em Andamento, Em Revisão...), com SLA/comentários/N1
   lidos do chamado NSD de origem.
 
@@ -65,7 +65,10 @@ CATEGORIAS_STATUS = [
 # do módulo). Status fora das colunas (ex.: "Aberto", QA, UAT) caem em
 # "Outros" pra nenhum ticket sumir. `status_na_lista` = coluna com mais de
 # um status, onde a linha precisa dizer qual (ex.: Reaberto x Pronto).
-PROJETOS_N2 = ("PLATZ", "BAHN")
+# 🔥 SDP ("Produto e Cadastro") entrou em 2026-10-30 - a automação também cria
+# ticket de dev lá (caso real SDP-62, vindo do BSD-55777, status "Pronto"
+# 13155) e ele sumia do Argus por não estar nesta lista.
+PROJETOS_N2 = ("PLATZ", "BAHN", "SDP")
 COLUNAS_N2 = [
     # (chave, nome da coluna no board, IDs de status, status_na_lista)
     ("disponivel", "Disponível", (13155, 4, 13154), True),
