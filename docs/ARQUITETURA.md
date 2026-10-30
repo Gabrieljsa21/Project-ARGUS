@@ -150,6 +150,16 @@ vínculos com BAHN). Por isso entram em `PROJETOS_ATENDIMENTO` sem nenhum
 outro ajuste. Onde esta seção diz "NSD", vale para os três. A JQL do perfil
 N1 filtra por ID de status, sem projeto, então já incluía BSD/NPSD.
 
+**Projeto SDP incluído no N2 (2026-10-30):** o SDP-62 ("Produto e
+Cadastro", vindo do BSD-55777, rótulo `servicedesk-ticket`, status "Pronto"
+13155) não aparecia no Argus: a automação também cria ticket de dev no SDP,
+mas a JQL do N2 só buscava `project in (PLATZ, BAHN)`, inclusive em "Outros".
+SDP entrou em `PROJETOS_N2`; os status que já batem com `COLUNAS_N2` caem na
+coluna certa e o resto vai para "Outros". Na data, uma busca por tickets
+atribuídos e não concluídos fora de PLATZ/BAHN/NSD/BSD/NPSD só trouxe o
+SDP-62. Opção descartada: tirar o filtro de projeto do N2 (pegaria tudo que
+não é atendimento), escolha do usuário pela mudança menor.
+
 **Correção junto:** `ArgusWidget.abrir_configuracoes` reescrevia o dict de
 configurações inteiro só com as chaves que o dialog conhecia; agora mescla
 com o que já estava salvo.

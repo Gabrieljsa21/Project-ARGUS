@@ -1124,8 +1124,8 @@ class _DialogoConfiguracoes(QDialog):
         lay_frame.addWidget(_titulo_secao("Perfil de atendimento"))
         lay_frame.addWidget(_descricao(
             "N1 acompanha os chamados do Service Desk atribuídos a você, por "
-            "status. N2 acompanha os tickets de desenvolvimento (Platz e "
-            "Bahn) atribuídos a você, com o SLA do chamado de origem."
+            "status. N2 acompanha os tickets de desenvolvimento (Platz, "
+            "Bahn e SDP) atribuídos a você, com o SLA do chamado de origem."
         ))
         self._campo_perfil = Switch("N2 - Platz e Bahn", "N1 - Service Desk", marcado=perfil_n2)
         lay_frame.addWidget(self._campo_perfil)

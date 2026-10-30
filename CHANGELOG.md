@@ -10,6 +10,11 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-30
+
+### Corrigido
+- **Ticket de dev do projeto SDP não aparecia no perfil N2** - o Argus só buscava tickets dos projetos PLATZ e BAHN, então um ticket criado pela automação no SDP ("Produto e Cadastro"), como o SDP-62, ficava fora do widget. O SDP agora entra no perfil N2, nas mesmas colunas. Ver `docs/ARQUITETURA.md`, seção "Perfil N1/N2".
+
 ## [0.9.0] - 2026-10-26
 
 ### Adicionado
