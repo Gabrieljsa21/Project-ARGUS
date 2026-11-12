@@ -10,6 +10,27 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-12
+
+### Adicionado
+- **Aviso de falha na alavanca** - quando a busca no Jira falha (inteira ou em parte), o ícone ganha um ponto vermelho e o tooltip diz o que falhou e quando; sem falha, o tooltip mostra o horário da última atualização. Token expirado ou recusado (401) aparece com instrução de como corrigir, em vez de deixar o widget vazio.
+- **Log em arquivo** - o Argus standalone grava a saída em `~/.argus/argus.log` (o `.vbs` oculto perdia tudo) e a bandeja ganhou "Abrir log". Sem `.env` ou com credencial recusada, abre uma mensagem explicando o problema em vez de fechar em silêncio.
+- **Testes em um comando e CI** - `python -m pytest` roda todos os testes (os antigos em formato de script também) e o GitHub Actions roda `ruff` + `pytest` em cada PR.
+
+### Alterado
+- **Busca mais rápida** - os tickets de cada categoria são processados em paralelo (6 por vez) e as requisições reaproveitam a conexão com o Jira.
+- **Clique no ticket não trava mais a janela** - marcar como visto roda em segundo plano; a tela já mostra como visto na hora.
+- **`widget.py` dividido** - componentes visuais foram para `core/componentes.py` e os diálogos para `core/dialogos.py`; os nomes continuam importáveis de `core/widget.py`.
+- **Estado antigo podado** - tickets sem gravação há mais de 180 dias saem do `~/.argus/config.json`, junto com as análises de imagem deles.
+- Sem rede ao abrir (ex.: iniciado com o Windows antes do Wi-Fi), o Argus abre e tenta de novo no próximo ciclo.
+
+### Corrigido
+- **Comentário do cliente escondido atrás de outro** - se o cliente comentava e logo depois vinha um comentário seu ou um aviso do "Automation for Jira", o do cliente não gerava aviso. Agora conta o último comentário de terceiro.
+- **Estado perdido ao gravar** - a gravação do `config.json` passou a ser atômica; antes, uma leitura no meio da escrita podia zerar todos os "vistos". Arquivo ilegível é guardado à parte em vez de sobrescrito.
+- **Urgência falsa** - "comparado", "separado" e "disparado" contêm "parado" e ativavam o piso de urgência; agora só palavra inteira conta, com ou sem acento.
+- **Máscara** - "senha errada" e "token expirou" perdiam a palavra seguinte; agora só valores com `:`/`=` (ou `Bearer <token>`) são mascarados. O texto enviado pelo botão "Analisar" e o trecho guardado no "Log" passam pela máscara.
+- **Mais de 100 tickets numa categoria** eram cortados; a busca segue todas as páginas.
+
 ## [0.9.1] - 2026-10-30
 
 ### Corrigido

@@ -30,12 +30,14 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 se um dia o fluxo for replicado em outro projeto Jira."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Callable
 
 import requests
+from requests.adapters import HTTPAdapter
 
-from ..modelos import PERFIL_N1, PERFIL_N2, Categoria, Ticket, perfil_configurado
+from ..modelos import PERFIL_N2, Categoria, Ticket, perfil_configurado
 from ..persistencia import Persistencia
 from ..pontuacao import calcular_detalhamento_pontuacao, detectar_urgencia_no_texto
 from ..seguranca import mascarar
@@ -147,6 +149,20 @@ STATUS_MR_LEGIVEL = {"OPEN": "Aberta", "MERGED": "Mesclada", "DECLINED": "Recusa
 # inteiro (o Jira continua sendo o lugar pra isso).
 TAMANHO_TRECHO_COMENTARIO = 160
 
+# 🔥 Tickets de uma categoria processados em paralelo (2026-11-12) - cada um
+# faz de 3 a 5 requisições (SLA, MRs, vínculo, changelog); em série, uma fila
+# de 15 tickets levava perto de um minuto por ciclo. 6 é folgado pro limite
+# de taxa do Jira Cloud.
+TICKETS_EM_PARALELO = 6
+# HTTP que não adianta repetir nem esconder (credencial errada/expirada, sem
+# permissão): sobe até o widget, que mostra o aviso em vez de ficar vazio.
+STATUS_HTTP_FATAIS = {401, 403}
+
+
+def _eh_falha_fatal(erro: Exception) -> bool:
+    resposta = getattr(erro, "response", None)
+    return resposta is not None and resposta.status_code in STATUS_HTTP_FATAIS
+
 
 class JiraProvider(NotificacaoProvider):
     def __init__(
@@ -156,6 +172,16 @@ class JiraProvider(NotificacaoProvider):
     ):
         self._base_url = base_url.rstrip("/")
         self._auth = (email, api_token)
+        # Uma sessão só (conexão TLS reaproveitada entre as requisições); o
+        # pool cobre as threads de `TICKETS_EM_PARALELO`.
+        self._sessao = requests.Session()
+        self._sessao.auth = self._auth
+        adaptador = HTTPAdapter(pool_maxsize=TICKETS_EM_PARALELO * 2)
+        self._sessao.mount("https://", adaptador)
+        self._sessao.mount("http://", adaptador)
+        # Falhas parciais da última busca (categoria ou ticket que ficou de
+        # fora) - o widget mostra na alavanca. Vazio = busca completa.
+        self.falhas_ultima_busca: list = []
         self._persistencia = persistencia
         # 🔥 De onde ler o perfil N1/N2 (2026-10-01) - por padrão a própria
         # persistência do provider. A GAIA cria um provider de VOZ com
@@ -170,7 +196,21 @@ class JiraProvider(NotificacaoProvider):
         # com o `client_vision` dela já configurado); sem isso, o ticket só-print
         # simplesmente não ganha pontuação extra de urgência por texto.
         self._descrever_imagem = descrever_imagem
-        self._minha_account_id = self._obter_meu_account_id()
+        # 🔥 Sem rede na abertura não derruba mais o Argus (2026-11-12) - ex.:
+        # iniciado com o Windows antes do Wi-Fi/VPN subir. O id é buscado de
+        # novo na primeira busca (`_garantir_account_id`). Credencial recusada
+        # (401/403) continua subindo na hora: aí não adianta esperar.
+        self._minha_account_id = None
+        try:
+            self._minha_account_id = self._obter_meu_account_id()
+        except requests.RequestException as e:
+            if _eh_falha_fatal(e):
+                raise
+            print(f"[Argus] Jira inacessível ao abrir (tento de novo na primeira busca): {e}")
+
+    def _garantir_account_id(self) -> None:
+        if getattr(self, "_minha_account_id", None) is None:
+            self._minha_account_id = self._obter_meu_account_id()
 
     @property
     def base_url(self) -> str:
@@ -221,7 +261,7 @@ class JiraProvider(NotificacaoProvider):
         ultimo_erro = None
         for tentativa in range(1, tentativas + 1):
             try:
-                resposta = requests.get(f"{self._base_url}{caminho}", auth=self._auth, params=params, timeout=15)
+                resposta = self._sessao.get(f"{self._base_url}{caminho}", params=params, timeout=15)
                 resposta.raise_for_status()
                 return resposta.json()
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -236,13 +276,19 @@ class JiraProvider(NotificacaoProvider):
     def _buscar_issues(self, jql: str) -> list:
         """`/rest/api/3/search` (clássico) foi descontinuado pela Atlassian -
         devolve 410 Gone. `/rest/api/3/search/jql` é o substituto oficial,
-        paginado por `nextPageToken` em vez de `startAt`/`total`."""
-        dados = self._obter("/rest/api/3/search/jql", params={
-            "jql": jql,
-            "fields": CAMPOS_ISSUE,
-            "maxResults": 100,
-        })
-        return dados.get("issues", [])
+        paginado por `nextPageToken` em vez de `startAt`/`total` - segue as
+        páginas até o fim (antes parava na primeira e cortava acima de 100)."""
+        issues = []
+        token = None
+        while True:
+            params = {"jql": jql, "fields": CAMPOS_ISSUE, "maxResults": 100}
+            if token:
+                params["nextPageToken"] = token
+            dados = self._obter("/rest/api/3/search/jql", params=params)
+            issues.extend(dados.get("issues", []))
+            token = dados.get("nextPageToken")
+            if not token or dados.get("isLast"):
+                return issues
 
     def _obter_issue_completo(self, chave: str) -> dict:
         return self._obter(f"/rest/api/3/issue/{chave}", params={"fields": CAMPOS_ISSUE})
@@ -292,15 +338,8 @@ class JiraProvider(NotificacaoProvider):
         if vinculo is None:
             return atual, None
         origem = self._obter_issue_completo(vinculo["key"])
-        comentarios_origem = origem["fields"].get("comment", {}).get("comments", [])
-        ultimo = comentarios_origem[-1] if comentarios_origem else None
-        atual.update({
-            "origem_chave": origem["key"],
-            "origem_ultimo_comentario_id": ultimo["id"] if ultimo else None,
-            "origem_ultimo_comentario_autor_id": ultimo["author"]["accountId"] if ultimo else None,
-            "origem_ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
-            "origem_ultimo_comentario_trecho": self._trecho_comentario(ultimo),
-        })
+        atual["origem_chave"] = origem["key"]
+        atual.update(self._campos_comentario(origem["fields"], prefixo="origem_"))
         return atual, origem
 
     def _eh_autor_automatico(self, nome_exibicao: str) -> bool:
@@ -395,7 +434,7 @@ class JiraProvider(NotificacaoProvider):
 
     def _baixar_anexo(self, url: str) -> bytes | None:
         try:
-            resposta = requests.get(url, auth=self._auth, timeout=20)
+            resposta = self._sessao.get(url, timeout=20)
             resposta.raise_for_status()
             return resposta.content
         except requests.RequestException:
@@ -476,15 +515,39 @@ class JiraProvider(NotificacaoProvider):
     def _trecho_comentario(cls, comentario: dict | None) -> str:
         if not comentario:
             return ""
-        texto = " ".join(cls._texto_plano_adf(comentario.get("body")).split())
+        # Mascarado: o trecho fica gravado no estado e aparece no botão "Log".
+        texto = mascarar(" ".join(cls._texto_plano_adf(comentario.get("body")).split()))
         if len(texto) > TAMANHO_TRECHO_COMENTARIO:
             texto = texto[:TAMANHO_TRECHO_COMENTARIO].rstrip() + "..."
         return texto
 
-    def _estado_atual(self, issue: dict) -> dict:
-        campos = issue["fields"]
+    def _eh_comentario_de_terceiro(self, comentario: dict) -> bool:
+        autor = comentario.get("author") or {}
+        return (autor.get("accountId") != self._minha_account_id
+                and not self._eh_autor_automatico(autor.get("displayName", "")))
+
+    def _campos_comentario(self, campos: dict, prefixo: str = "") -> dict:
+        """Último comentário de qualquer autor (formato antigo do estado,
+        mantido pra comparar com "vistos" gravados antes) e último comentário
+        de TERCEIRO, que é o que decide a novidade.
+
+        🔥 Último de terceiro (2026-11-12): antes só o último comentário
+        contava - se o cliente comentava e logo depois vinha um comentário seu
+        ou um aviso do "Automation for Jira", o do cliente sumia sem aviso."""
         comentarios = campos.get("comment", {}).get("comments", [])
         ultimo = comentarios[-1] if comentarios else None
+        terceiro = next((c for c in reversed(comentarios) if self._eh_comentario_de_terceiro(c)), None)
+        return {
+            f"{prefixo}ultimo_comentario_id": ultimo["id"] if ultimo else None,
+            f"{prefixo}ultimo_comentario_terceiro_id": terceiro["id"] if terceiro else None,
+            # Nome e trecho só alimentam o log de mudanças (`_descrever_mudancas`),
+            # nunca a decisão de novidade (que compara ids).
+            f"{prefixo}ultimo_comentario_autor_nome": terceiro["author"].get("displayName", "") if terceiro else None,
+            f"{prefixo}ultimo_comentario_trecho": self._trecho_comentario(terceiro),
+        }
+
+    def _estado_atual(self, issue: dict) -> dict:
+        campos = issue["fields"]
         return {
             # 🔥 Chave do issue REALMENTE usado pra novidade (2026-08-21) - pro
             # vínculo de 2 saltos ("Aguardando desenvolvimento"), é a chave do
@@ -499,10 +562,7 @@ class JiraProvider(NotificacaoProvider):
             # Nome e trecho só alimentam o log de mudanças (`_descrever_mudancas`),
             # nunca a decisão de novidade (que compara ids).
             "assignee_nome": (campos.get("assignee") or {}).get("displayName", ""),
-            "ultimo_comentario_id": ultimo["id"] if ultimo else None,
-            "ultimo_comentario_autor_id": ultimo["author"]["accountId"] if ultimo else None,
-            "ultimo_comentario_autor_nome": ultimo["author"].get("displayName", "") if ultimo else None,
-            "ultimo_comentario_trecho": self._trecho_comentario(ultimo),
+            **self._campos_comentario(campos),
             "mrs": self._mrs_do_issue(issue),
         }
 
@@ -691,13 +751,20 @@ class JiraProvider(NotificacaoProvider):
         """`prefixo="origem_"` checa o NSD de origem (perfil N2, ver
         `_resolver_estado_novidade`) com a mesma regra do ticket principal:
         comentário próprio ou de automação não conta. Estado sem essas
-        chaves (perfil N1) simplesmente nunca conta."""
+        chaves (perfil N1) simplesmente nunca conta.
+
+        Compara o último comentário de TERCEIRO (ver `_campos_comentario`).
+        "Visto" gravado antes desse campo cai na regra antiga (o último
+        comentário de qualquer autor mudou e é de terceiro), pra não avisar
+        de novo um comentário que já tinha sido visto."""
+        chave_terceiro = f"{prefixo}ultimo_comentario_terceiro_id"
+        id_terceiro = atual.get(chave_terceiro)
+        if chave_terceiro in visto:
+            return bool(id_terceiro) and id_terceiro != visto[chave_terceiro]
         id_atual = atual.get(f"{prefixo}ultimo_comentario_id")
         if not id_atual or id_atual == visto.get(f"{prefixo}ultimo_comentario_id"):
             return False
-        autor_id = atual.get(f"{prefixo}ultimo_comentario_autor_id")
-        autor_nome = atual.get(f"{prefixo}ultimo_comentario_autor_nome") or ""
-        return autor_id != self._minha_account_id and not self._eh_autor_automatico(autor_nome)
+        return id_atual == id_terceiro
 
     def buscar_dados_brutos(self) -> list:
         """Parte cara desta classe (JQL x4 + 1 SLA por ticket + Visão/texto de
@@ -724,57 +791,85 @@ class JiraProvider(NotificacaoProvider):
         `try/except requests.RequestException` - uma falha vira só um log e
         aquela categoria/ticket fica de fora NESTE ciclo (reaparece sozinho
         assim que a rede normalizar), sem derrubar o resto que já tinha
-        dado certo."""
+        dado certo.
+
+        🔥 Falhas visíveis (2026-11-12): token expirado ou sem permissão
+        (401/403) sobe na hora, sem ser engolido por categoria - antes o
+        widget só ficava vazio, sem explicação. Se TODAS as categorias
+        falharem, o último erro também sobe. Falhas parciais ficam em
+        `falhas_ultima_busca`, que o widget mostra na alavanca.
+
+        🔥 Tickets em paralelo (2026-11-12, ver `TICKETS_EM_PARALELO`)."""
+        self._garantir_account_id()
         dados = []
-        for chave_cat, nome_cat, jql in self._definicao_categorias():
-            try:
-                issues = self._buscar_issues(jql)
-            except requests.RequestException as e:
-                print(f'[Argus] Falha ao buscar tickets de "{nome_cat}" (tentando de novo no próximo ciclo): {e}')
-                continue
-            tickets_brutos = []
-            for issue in issues:
-                chave_ticket = issue["key"]
+        falhas = []
+        definicao = self._definicao_categorias()
+        ultimo_erro = None
+        with ThreadPoolExecutor(max_workers=TICKETS_EM_PARALELO) as executor:
+            for chave_cat, nome_cat, jql in definicao:
                 try:
-                    campos = issue["fields"]
-                    atual, origem = self._resolver_estado_novidade(issue)
-                    prioridade = (campos.get("priority") or {}).get("name", "")
-
-                    texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
-                    urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
-                    # 🔥 SLA só existe no chamado do Service Desk - ticket de
-                    # dev responde 404 no endpoint de SLA (confirmado contra a
-                    # instância real, 2026-10-01). No perfil N2 o SLA vem do
-                    # NSD de origem; ticket de dev sem origem fica sem SLA.
-                    if self._eh_chamado_atendimento(chave_ticket):
-                        sla_info = self._obter_sla_info(chave_ticket)
-                    else:
-                        sla_info = self._obter_sla_info(origem["key"]) if origem else None
-                    detalhamento_pontuacao = calcular_detalhamento_pontuacao(
-                        prioridade, urgencia_no_texto, sla_info,
-                    )
-
-                    tickets_brutos.append({
-                        "chave": chave_ticket,
-                        "resumo": campos["summary"],
-                        "status": campos["status"]["name"],
-                        "prioridade": prioridade,
-                        "atualizado_em": campos["updated"],
-                        "pontuacao_foco": detalhamento_pontuacao.total,
-                        "sigla_tipo": _sigla_tipo(campos.get("labels") or []),
-                        "detalhamento_pontuacao": detalhamento_pontuacao,
-                        "urgencia_no_texto": urgencia_no_texto,
-                        "atual": atual,
-                        "detalhe": self._extrair_campos_detalhe_com_origem(campos, origem),
-                        "sla_texto": (sla_info or {}).get("restante_texto", ""),
-                        "sla_estourado": bool(sla_info and sla_info.get("breached")),
-                        "sla_restante_millis": (sla_info or {}).get("restante_millis") if sla_info else None,
-                    })
+                    issues = self._buscar_issues(jql)
                 except requests.RequestException as e:
-                    print(f"[Argus] Falha ao processar o chamado {chave_ticket} (ignorado neste ciclo): {e}")
+                    if _eh_falha_fatal(e):
+                        raise
+                    ultimo_erro = e
+                    falhas.append(f'Categoria "{nome_cat}": {e}')
+                    print(f'[Argus] Falha ao buscar tickets de "{nome_cat}" (tentando de novo no próximo ciclo): {e}')
                     continue
-            dados.append((chave_cat, nome_cat, tickets_brutos))
+                # A exceção de um ticket só aparece ao ler o resultado dele,
+                # então cada um continua isolado; a ordem da JQL se mantém.
+                futuros = [executor.submit(self._processar_ticket, issue) for issue in issues]
+                tickets_brutos = []
+                for issue, futuro in zip(issues, futuros):
+                    try:
+                        tickets_brutos.append(futuro.result())
+                    except requests.RequestException as e:
+                        if _eh_falha_fatal(e):
+                            raise
+                        falhas.append(f"{issue['key']}: {e}")
+                        print(f"[Argus] Falha ao processar o chamado {issue['key']} (ignorado neste ciclo): {e}")
+                dados.append((chave_cat, nome_cat, tickets_brutos))
+        if definicao and not dados and ultimo_erro is not None:
+            raise ultimo_erro
+        self.falhas_ultima_busca = falhas
         return dados
+
+    def _processar_ticket(self, issue: dict) -> dict:
+        """Parte de rede de UM ticket (vínculo, MRs, SLA, visão) - roda numa
+        thread do `ThreadPoolExecutor` de `buscar_dados_brutos`."""
+        chave_ticket = issue["key"]
+        campos = issue["fields"]
+        atual, origem = self._resolver_estado_novidade(issue)
+        prioridade = (campos.get("priority") or {}).get("name", "")
+
+        texto_mascarado = mascarar(self._obter_texto_para_analise(issue, chave_ticket))
+        urgencia_no_texto = detectar_urgencia_no_texto(texto_mascarado)
+        # 🔥 SLA só existe no chamado do Service Desk - ticket de dev responde
+        # 404 no endpoint de SLA (confirmado contra a instância real,
+        # 2026-10-01). No perfil N2 o SLA vem do NSD de origem; ticket de dev
+        # sem origem fica sem SLA.
+        if self._eh_chamado_atendimento(chave_ticket):
+            sla_info = self._obter_sla_info(chave_ticket)
+        else:
+            sla_info = self._obter_sla_info(origem["key"]) if origem else None
+        detalhamento_pontuacao = calcular_detalhamento_pontuacao(prioridade, urgencia_no_texto, sla_info)
+
+        return {
+            "chave": chave_ticket,
+            "resumo": campos["summary"],
+            "status": campos["status"]["name"],
+            "prioridade": prioridade,
+            "atualizado_em": campos["updated"],
+            "pontuacao_foco": detalhamento_pontuacao.total,
+            "sigla_tipo": _sigla_tipo(campos.get("labels") or []),
+            "detalhamento_pontuacao": detalhamento_pontuacao,
+            "urgencia_no_texto": urgencia_no_texto,
+            "atual": atual,
+            "detalhe": self._extrair_campos_detalhe_com_origem(campos, origem),
+            "sla_texto": (sla_info or {}).get("restante_texto", ""),
+            "sla_estourado": bool(sla_info and sla_info.get("breached")),
+            "sla_restante_millis": (sla_info or {}).get("restante_millis") if sla_info else None,
+        }
 
     def classificar(self, dados_brutos: list, persistencia: Persistencia | None = None) -> list:
         """Parte barata (só compara `dados_brutos` - já buscado - contra uma
@@ -850,6 +945,7 @@ class JiraProvider(NotificacaoProvider):
         desde o visto anterior (`ultimas_mudancas`), pro botão "Log" continuar
         mostrando o motivo do último aviso depois que a novidade some. Se nada
         mudou, mantém o log anterior."""
+        self._garantir_account_id()
         issue = self._obter_issue_completo(chave_ticket)
         estado, _ = self._resolver_estado_novidade(issue)
         visto = self._persistencia.obter_estado_ticket(chave_ticket)
@@ -889,13 +985,16 @@ class JiraProvider(NotificacaoProvider):
                 for c in self._comentarios_texto(campos_origem)
             ]
             comentarios = sorted(comentarios + comentarios_origem, key=lambda c: c["criado_em"])
-        return {"descricao": descricao, "comentarios": comentarios}
+        # 🔥 Mascarado (2026-11-12): este material vai pro consumidor (ex.: a
+        # GAIA manda pra um LLM no botão "Analisar") - mesma camada já usada
+        # na detecção de urgência, ver seguranca.py.
+        return {"descricao": mascarar(descricao), "comentarios": comentarios}
 
     def _comentarios_texto(self, campos: dict) -> list:
         return [
             {
                 "autor": (comentario.get("author") or {}).get("displayName", ""),
-                "texto": self._texto_plano_adf(comentario.get("body")),
+                "texto": mascarar(self._texto_plano_adf(comentario.get("body"))),
                 "criado_em": comentario.get("created", ""),
             }
             for comentario in campos.get("comment", {}).get("comments", [])

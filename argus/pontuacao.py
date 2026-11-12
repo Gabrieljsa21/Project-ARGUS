@@ -18,6 +18,9 @@ compartilhada entre vários atendentes de várias empresas):
    request/{chave}/sla` - "Time to resolution").
 """
 
+import re
+import unicodedata
+
 from .modelos import DetalhamentoPontuacao
 
 PONTUACAO_BASE_PRIORIDADE = {
@@ -83,15 +86,36 @@ FRASES_NEGACAO_URGENCIA = (
 )
 
 
+def _normalizar(texto: str) -> str:
+    """Minúsculas, sem acento e com espaços simples - "Urgência", "urgencia"
+    e "URGENCIA" viram a mesma coisa."""
+    sem_acento = unicodedata.normalize("NFKD", texto.lower())
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    return " ".join(sem_acento.split())
+
+
+def _padrao_frases(frases) -> re.Pattern:
+    """Casa só a frase INTEIRA (bordas de palavra), nunca pedaço de outra
+    palavra."""
+    normalizadas = sorted({_normalizar(f) for f in frases}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(f) for f in normalizadas) + r")\b")
+
+
+# 🔥 Palavra inteira e sem acento (2026-11-12, achado na análise do código):
+# a busca por substring fazia "comparado", "separado" e "disparado" (que
+# contêm "parado") ativarem o piso de urgência de 75 pontos. As listas acima
+# continuam com e sem acento por legibilidade; a normalização cobre as duas.
+_PADRAO_URGENCIA = _padrao_frases(PALAVRAS_URGENCIA)
+_PADRAO_NEGACAO = _padrao_frases(FRASES_NEGACAO_URGENCIA)
+
+
 def detectar_urgencia_no_texto(texto: str) -> bool:
     """Heurístico por palavra-chave (sem LLM/dependência nova) - mesmo espírito
     do stand-in usado pelo protótipo original antes de trocar por um `IChatClient`
     de verdade. Fácil de trocar por um classificador melhor depois, sem mudar
     quem chama isso (`JiraProvider`)."""
-    texto_normalizado = texto.lower()
-    for frase in FRASES_NEGACAO_URGENCIA:
-        texto_normalizado = texto_normalizado.replace(frase, "")
-    return any(palavra in texto_normalizado for palavra in PALAVRAS_URGENCIA)
+    texto_normalizado = _PADRAO_NEGACAO.sub(" ", _normalizar(texto))
+    return _PADRAO_URGENCIA.search(texto_normalizado) is not None
 
 
 def _bonus_sla(sla_info: dict | None) -> int:

@@ -51,6 +51,22 @@ Troque em **Configurações... → Perfil de atendimento** (menu da bandeja, ou 
 
 Use `iniciar_argus_oculto.vbs` para abrir sem deixar um terminal visível. `criar_atalho_desktop.vbs` cria um atalho na área de trabalho.
 
+### Quando algo não aparece
+
+- **Ponto vermelho no ícone:** a última busca no Jira falhou. Passe o mouse no ícone para ver o motivo e o horário; o Argus tenta de novo sozinho no próximo ciclo.
+- **"Credencial do Jira recusada (401)":** o token expirou ou o e-mail não confere. Gere um token novo e atualize o `.env`.
+- **Log:** a saída do Argus fica em `~/.argus/argus.log` (menu da bandeja, "Abrir log").
+
+## Testes
+
+```powershell
+uv pip install pytest ruff
+python -m ruff check .
+python -m pytest
+```
+
+O `pytest` roda os testes de unidade e também os testes antigos em formato de script (cada um no seu processo, com Qt `offscreen`). O mesmo roda no GitHub Actions a cada PR.
+
 ## Integrações com outros projetos
 
 - **GAIA:** adiciona avisos por voz e permite gerar um rascunho de resposta com IA dentro do painel de detalhes.

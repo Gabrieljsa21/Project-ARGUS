@@ -142,11 +142,36 @@ def main():
     visto = {"status": "A", "prioridade": "Medium", "assignee_id": None, "chave": "PLATZ-1",
              "origem_ultimo_comentario_id": "1"}
     atual = dict(visto, assignee_nome="", origem_chave="BSD-9", origem_ultimo_comentario_id="2",
-                 origem_ultimo_comentario_autor_id="n1", origem_ultimo_comentario_autor_nome="Ana",
+                 origem_ultimo_comentario_terceiro_id="2", origem_ultimo_comentario_autor_nome="Ana",
                  origem_ultimo_comentario_trecho="Cliente confirmou")
     checar("comentário do chamado de origem marcado como N1",
            provider._descrever_mudancas(visto, atual) == ['Comentário novo de Ana no BSD-9 (N1): "Cliente confirmou"'],
            provider._descrever_mudancas(visto, atual))
+
+    # Comentário do cliente seguido de um seu (ou de automação) no mesmo ciclo:
+    # antes só o último comentário contava e o do cliente sumia sem aviso.
+    provider.marcar_visto("PLATZ-1")
+    jira.comentarios.append(_comentario("4", "cliente", "Cliente X", "Segue o print"))
+    jira.comentarios.append(_comentario("5", "eu", "Eu", "Vou olhar"))
+    jira.comentarios.append(_comentario("6", "bot", "Automation for Jira", "SLA perto de vencer"))
+    t = ticket()
+    checar("comentário de terceiro escondido atrás do seu ainda avisa",
+           t.novo and t.tipo_evento == "comentario"
+           and t.mudancas == ['Comentário novo de Cliente X no PLATZ-1 (N2): "Segue o print"'], t.mudancas)
+    provider.marcar_visto("PLATZ-1")
+    jira.comentarios.append(_comentario("7", "bot", "Automation for Jira", "SLA vencido"))
+    checar("comentário só de automação depois do visto não avisa", not ticket().novo)
+
+    # "Visto" gravado antes do campo de terceiro: regra antiga, sem reavisar.
+    estado = persistencia.obter_estado_ticket("PLATZ-1")
+    estado.pop("ultimo_comentario_terceiro_id")
+    persistencia.salvar_estado_ticket("PLATZ-1", estado)
+    checar("estado antigo sem o campo de terceiro não reavisa comentário visto", not ticket().novo)
+
+    # Trecho guardado no estado passa pela máscara.
+    jira.comentarios.append(_comentario("8", "cliente", "Cliente X", "a senha: abc123 não funciona"))
+    trecho = next(m for m in ticket().mudancas if m.startswith("Comentário"))
+    checar("trecho do comentário sai mascarado", "abc123" not in trecho and "removido" in trecho, trecho)
     checar("NSD, BSD e NPSD contam como chamado de atendimento (N1)",
            all(JiraProvider._eh_chamado_atendimento(c) for c in ("NSD-1", "BSD-2", "NPSD-3"))
            and not any(JiraProvider._eh_chamado_atendimento(c) for c in ("PLATZ-1", "BAHN-2", "NSDX-3")))

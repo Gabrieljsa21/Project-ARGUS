@@ -33,27 +33,39 @@ import webbrowser
 from datetime import datetime
 
 from PySide6.QtCore import (
-    Qt, QTimer, QThread, Signal, QPointF, QPoint, QRect, QSize, QEvent, QObject,
-    QPropertyAnimation, QEasingCurve, Property,
+    Qt, QTimer, QPointF, QEvent, QObject,
 )
 from PySide6.QtGui import (
     QPainter, QPainterPath, QPixmap, QColor, QRegion, QFont, QFontMetrics, QPen, QRadialGradient,
-    QGuiApplication, QIntValidator,
+    QGuiApplication,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QStyleOption, QStyle, QApplication,
-    QDialog, QTextEdit, QPlainTextEdit, QPushButton, QLineEdit, QFrame, QCheckBox,
+    QDialog, QPushButton,
 )
 
 from .tema import (
     BG_COLOR, SURFACE_COLOR, HIGHLIGHT_COLOR, BORDA_SUTIL,
-    GAIA_GOLD, GAIA_GOLD_HOVER, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
-    cor_com_alpha,
+    GAIA_GOLD, GAIA_SILVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, CORES_PRIORIDADE,
 )
-from ..modelos import PERFIL_N1, PERFIL_N2, perfil_configurado, texto_pontuacao
+from ..modelos import texto_pontuacao
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
+from .componentes import TAMANHO_FONTE_DETALHE, LIMITE_JANELAS_DESTACADAS_PADRAO, ATIVAR_CHACOALHADA_ATENCAO
 
 LIMIAR_ARRASTAR_PIXELS = 6
+# Ponto de aviso na alavanca quando a última busca no Jira falhou (inteira ou
+# em parte) - mesma cor do SLA estourado/prioridade máxima.
+COR_AVISO_ALAVANCA = CORES_PRIORIDADE["Highest"]
+MAX_FALHAS_NO_TOOLTIP = 5
+
+
+def mensagem_falha_jira(mensagem: str) -> str:
+    """Traduz os erros que pedem ação da pessoa; o resto passa como veio."""
+    if "401" in mensagem:
+        return "Credencial do Jira recusada (401): confira o JIRA_EMAIL e gere um token novo no .env."
+    if "403" in mensagem:
+        return "Sem permissão no Jira (403) para esta consulta."
+    return mensagem
 ATRASO_FECHAR_MS = 250
 RAIO_CANTO = 12
 MAX_LINHAS_VISIVEIS = 5
@@ -102,7 +114,7 @@ CAMINHO_ICONE_ALAVANCA = os.path.join(
 # enquanto ANEXADO, com espaço suficiente pra rótulo+valor sem elidir demais.
 LARGURA_PAINEL_DETALHES = 340
 ESPACAMENTO_PAINEL_DETALHES = 8
-TAMANHO_FONTE_DETALHE = 11
+# TAMANHO_FONTE_DETALHE: ver componentes.py (compartilhado com os diálogos).
 
 # 🔥 Anexado/Destacado (2026-08-15, ver argus_painel_detalhes_ticket.md) -
 # constantes da reescrita do painel de detalhes como extensão visual do
@@ -112,7 +124,7 @@ RESERVA_CABECALHO_ACOES_PAINEL_DETALHES = 170
 ALTURA_MINIMA_PAINEL_DETALHES = 160
 DURACAO_PULSO_ATENCAO_MS = 900
 INTERVALO_TIMER_PULSO_ATENCAO_MS = 30
-LIMITE_JANELAS_DESTACADAS_PADRAO = 5
+# LIMITE_JANELAS_DESTACADAS_PADRAO: ver componentes.py.
 # 🔥 Cascata entre janelas destacadas (2026-08-16, correção de bug relatado
 # pelo usuário: "os tickets estao se sobrepondo ao selecionar varios" - a
 # geometria lembrada era ÚNICA e compartilhada, então destacar 2+ tickets
@@ -125,7 +137,7 @@ PASSO_CASCATA_JANELAS_DESTACADAS = 32
 # uso frequente" (pedido do usuário) - desligada por padrão; ligável em
 # tempo real pelo menu de Configurações (ver `_DialogoConfiguracoes`), este
 # valor aqui é só o padrão de fábrica antes de qualquer config salva.
-ATIVAR_CHACOALHADA_ATENCAO = False
+# ATIVAR_CHACOALHADA_ATENCAO: ver componentes.py (padrão de fábrica).
 
 # 🔥 Glow no chip aberto (2026-08-15) - variante "5c" escolhida: junto com o
 # destaque já existente (fundo HIGHLIGHT_COLOR + borda dourada), um brilho
@@ -225,10 +237,20 @@ class _Alavanca(QWidget):
         self._ao_soltar_arraste = ao_soltar_arraste
         self._pos_pressionada = None
         self._arrastou = False
+        self._com_aviso = False
         self.setFixedSize(30, 30)
         self.setCursor(Qt.PointingHandCursor)
         if _Alavanca._pixmap_icone is None:
             _Alavanca._pixmap_icone = QPixmap(CAMINHO_ICONE_ALAVANCA)
+
+    def definir_estado(self, texto: str, com_aviso: bool):
+        """🔥 Estado da última busca no Jira (2026-11-12): tooltip com o
+        horário e, havendo falha, um ponto vermelho no canto do ícone - antes
+        um token expirado deixava o widget vazio sem explicação nenhuma."""
+        self.setToolTip(texto)
+        if com_aviso != self._com_aviso:
+            self._com_aviso = com_aviso
+            self.update()
 
     def paintEvent(self, evento):
         pintor = QPainter(self)
@@ -240,6 +262,10 @@ class _Alavanca(QWidget):
         x = (self.width() - icone.width()) // 2
         y = (self.height() - icone.height()) // 2
         pintor.drawPixmap(x, y, icone)
+        if self._com_aviso:
+            pintor.setPen(QPen(QColor(BG_COLOR), 1.5))
+            pintor.setBrush(QColor(COR_AVISO_ALAVANCA))
+            pintor.drawEllipse(QPointF(self.width() - 5.5, self.height() - 5.5), 4.5, 4.5)
 
     def mousePressEvent(self, evento):
         self._pos_pressionada = evento.globalPosition().toPoint()
@@ -653,554 +679,17 @@ class _LinhaTicket(QWidget):
         self._ao_clicar(self._ticket)
 
 
-class _TarefaSegundoPlano(QThread):
-    """QThread genérica (2026-08-15) - roda `func` fora da thread da UI, pra
-    não travar a janela durante uma chamada de rede (buscar comentários) ou de
-    LLM (gerar o rascunho de análise). `concluido`/`erro` disparam de volta na
-    thread da UI (padrão normal de sinal do Qt entre threads)."""
-    concluido = Signal(object)
-    erro = Signal(str)
-
-    def __init__(self, func, parent=None):
-        super().__init__(parent)
-        self._func = func
-
-    def run(self):
-        try:
-            resultado = self._func()
-        except Exception as e:
-            self.erro.emit(str(e))
-        else:
-            self.concluido.emit(resultado)
-
-
-def _botao_estilizado(texto, cor=GAIA_GOLD, preenchido=False) -> QPushButton:
-    """Botão no PADRÃO VISUAL DA GAIA (2026-08-16, pedido do usuário: "os
-    botões eu quero eles no padrão da GAIA. A GAIA vai ser o padrão de todos
-    os projetos") - mesmo molde de `criar_botao` (assistant/ui/qt_widgets.py):
-    `preenchido=True` pro botão de ação PRINCIPAL (fundo dourado sólido, ex.:
-    "Salvar", "Analisar", "Entendi"); `False` (padrão) pro estilo "outline"
-    dos botões secundários (ex.: "Cancelar", "Abrir", "Fechar"). O Argus
-    continua sem IMPORTAR a fábrica de widgets da GAIA (fica standalone/leve
-    pros colegas, ver docstring do módulo) - só copia o visual."""
-    botao = QPushButton(texto)
-    botao.setCursor(Qt.PointingHandCursor)
-    botao.setFixedHeight(32)
-    botao.setFont(QFont(FONTE_BASE, TAMANHO_FONTE_DETALHE, QFont.Bold))
-    if preenchido:
-        botao.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {GAIA_GOLD}; color: {BG_COLOR};
-                border: none; border-radius: 8px; padding: 0 16px;
-            }}
-            QPushButton:hover {{ background-color: {GAIA_GOLD_HOVER}; }}
-        """)
-    else:
-        botao.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {SURFACE_COLOR}; color: {cor};
-                border: 1px solid {BORDA_SUTIL}; border-radius: 8px; padding: 0 14px;
-            }}
-            QPushButton:hover {{ background-color: {HIGHLIGHT_COLOR}; }}
-        """)
-    return botao
-
-
-class _DialogoComentario(QDialog):
-    """Pergunta um comentário/instrução opcional ANTES de mandar o ticket pra
-    análise (2026-08-15, pedido do usuário: "fazer a análise permitindo
-    colocar um comentário") - texto livre, some direto na instrução da LLM
-    (ver GAIA, quem injeta `analisar_ticket`), nunca vira comentário de
-    verdade no Jira sozinho."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Analisar ticket")
-        self.setStyleSheet(f"background-color: {BG_COLOR};")
-        self.resize(360, 200)
-        self.comentario = None
-
-        lay = QVBoxLayout(self)
-        rotulo = QLabel("Comentário/instrução adicional (opcional):")
-        rotulo.setStyleSheet(f"color: {TEXT_DIM};")
-        lay.addWidget(rotulo)
-
-        self._campo = QPlainTextEdit()
-        self._campo.setStyleSheet(
-            f"background-color: {SURFACE_COLOR}; color: {TEXT_COLOR}; border: 1px solid {BORDA_SUTIL}; border-radius: 6px;"
-        )
-        lay.addWidget(self._campo, 1)
-
-        linha_botoes = QHBoxLayout()
-        linha_botoes.addStretch(1)
-        botao_cancelar = _botao_estilizado("Cancelar", cor=TEXT_DIM)
-        botao_cancelar.clicked.connect(self.reject)
-        linha_botoes.addWidget(botao_cancelar)
-        botao_analisar = _botao_estilizado("Analisar", preenchido=True)
-        botao_analisar.clicked.connect(self._confirmar)
-        linha_botoes.addWidget(botao_analisar)
-        lay.addLayout(linha_botoes)
-
-    def _confirmar(self):
-        self.comentario = self._campo.toPlainText().strip()
-        self.accept()
-
-
-class _DialogoRascunho(QDialog):
-    """Mostra o rascunho gerado pra revisar/editar antes de usar (2026-08-15,
-    escolha do usuário entre as opções: dialog de revisão em vez de copiar
-    direto ou salvar em arquivo) - texto fica editável (o usuário pode
-    ajustar antes de copiar), botão "Copiar" joga pra área de transferência."""
-
-    def __init__(self, texto, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Rascunho de resposta")
-        self.setStyleSheet(f"background-color: {BG_COLOR};")
-        self.resize(460, 360)
-
-        lay = QVBoxLayout(self)
-        self._texto = QTextEdit()
-        self._texto.setPlainText(texto)
-        self._texto.setStyleSheet(
-            f"background-color: {SURFACE_COLOR}; color: {TEXT_COLOR}; border: 1px solid {BORDA_SUTIL}; border-radius: 6px;"
-        )
-        lay.addWidget(self._texto, 1)
-
-        linha_botoes = QHBoxLayout()
-        linha_botoes.addStretch(1)
-        botao_fechar = _botao_estilizado("Fechar", cor=TEXT_DIM)
-        botao_fechar.clicked.connect(self.reject)
-        linha_botoes.addWidget(botao_fechar)
-        botao_copiar = _botao_estilizado("Copiar", preenchido=True)
-        botao_copiar.clicked.connect(self._copiar)
-        linha_botoes.addWidget(botao_copiar)
-        lay.addLayout(linha_botoes)
-
-    def _copiar(self):
-        QApplication.clipboard().setText(self._texto.toPlainText())
-
-
-class _DialogoLogMudancas(QDialog):
-    """O que gerou o aviso do ticket (2026-10-08, ver `Ticket.mudancas`) -
-    uma linha por mudança desde o último visto, só leitura."""
-
-    def __init__(self, ticket, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Log - {ticket.chave}")
-        self.setStyleSheet(f"background-color: {BG_COLOR};")
-        self.resize(420, 240)
-
-        lay = QVBoxLayout(self)
-        if ticket.mudancas_vistas_em:
-            try:
-                quando = datetime.fromisoformat(ticket.mudancas_vistas_em).strftime("%d/%m %H:%M")
-            except ValueError:
-                quando = ticket.mudancas_vistas_em
-            cabecalho = f"Último aviso, visto em {quando}:"
-        else:
-            cabecalho = "Mudanças desde a última vez que você abriu:"
-        lay.addWidget(_descricao(cabecalho))
-
-        self._texto = QTextEdit()
-        self._texto.setReadOnly(True)
-        self._texto.setPlainText("\n".join(f"• {item}" for item in ticket.mudancas))
-        self._texto.setStyleSheet(
-            f"background-color: {SURFACE_COLOR}; color: {TEXT_COLOR}; border: 1px solid {BORDA_SUTIL}; border-radius: 6px;"
-        )
-        lay.addWidget(self._texto, 1)
-
-        linha_botoes = QHBoxLayout()
-        linha_botoes.addStretch(1)
-        botao_fechar = _botao_estilizado("Fechar", preenchido=True)
-        botao_fechar.clicked.connect(self.accept)
-        linha_botoes.addWidget(botao_fechar)
-        lay.addLayout(linha_botoes)
-
-
-class _DialogoAvisoLimite(QDialog):
-    """Aviso quando o limite de janelas destacadas é atingido (2026-08-15, ver
-    argus_painel_detalhes_ticket.md, "Limite de janelas independentes") -
-    dialog PRÓPRIO (não QMessageBox nativo, que destoaria visualmente do
-    resto do Argus sem borda/translúcido)."""
-
-    def __init__(self, limite, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Limite de janelas atingido")
-        self.setStyleSheet(f"background-color: {BG_COLOR};")
-        self.resize(340, 150)
-
-        lay = QVBoxLayout(self)
-        mensagem = QLabel(
-            f"Já existem {limite} janela(s) de detalhes destacada(s) - o limite "
-            "configurado. Feche ou reanexe uma antes de destacar outra."
-        )
-        mensagem.setWordWrap(True)
-        mensagem.setStyleSheet(f"color: {TEXT_COLOR};")
-        lay.addWidget(mensagem, 1)
-
-        linha_botoes = QHBoxLayout()
-        linha_botoes.addStretch(1)
-        botao_ok = _botao_estilizado("Entendi", preenchido=True)
-        botao_ok.clicked.connect(self.accept)
-        linha_botoes.addWidget(botao_ok)
-        lay.addLayout(linha_botoes)
-
-
-def _titulo_secao(texto, cor=GAIA_GOLD, tamanho=13) -> QLabel:
-    """Título de seção/card no padrão da GAIA (`criar_titulo_secao`,
-    assistant/ui/qt_widgets.py) - copiado aqui (não importado, ver docstring
-    do módulo)."""
-    lbl = QLabel(texto)
-    lbl.setFont(QFont(FONTE_BASE, tamanho, QFont.Bold))
-    lbl.setStyleSheet(f"color: {cor}; background: transparent; border: none;")
-    return lbl
-
-
-def _descricao(texto) -> QLabel:
-    """Texto explicativo discreto no padrão da GAIA (`criar_descricao`)."""
-    lbl = QLabel(texto)
-    lbl.setWordWrap(True)
-    lbl.setFont(QFont(FONTE_BASE, 10))
-    lbl.setStyleSheet(f"color: {TEXT_DIM}; background: transparent; border: none;")
-    return lbl
-
-
-class _CampoValorSpinbox(QLineEdit):
-    """Campo de número da `SpinboxCapsula` - mesmo padrão da GAIA
-    (`ui/qt_widgets.py`, pedido do usuário: "esses campos tem de permitir
-    clicar nele para escrever"). Seleciona o texto inteiro ao focar
-    (`QTimer.singleShot(0, ...)` - selecionar direto dentro do próprio
-    `focusInEvent` não pega, o clique que deu o foco ainda vai processar seu
-    próprio posicionamento de cursor por cima logo em seguida)."""
-
-    def focusInEvent(self, evento):
-        super().focusInEvent(evento)
-        QTimer.singleShot(0, self.selectAll)
-
-
-class SpinboxCapsula(QWidget):
-    """Campo numérico "Cápsula" no padrão da GAIA (2026-08-16, pedido do
-    usuário: "os botões eu quero eles no padrão da GAIA" - copiado de
-    `ui/qt_widgets.py`, não importado, ver docstring do módulo) - botões +/-
-    redondos dentro de uma cápsula arredondada, em vez das setinhas nativas
-    do `QSpinBox` (pequenas demais pra acertar o clique com facilidade).
-    Expõe a mesma interface básica de um `QSpinBox` (`value()`/`setValue()`/
-    `setRange()`/`valueChanged`)."""
-
-    valueChanged = Signal(int)
-
-    _TAMANHO_BOTAO = 20
-
-    def __init__(self, minimo, maximo, valor_atual, largura=None, passo=1, parent=None):
-        super().__init__(parent)
-        self._minimo = minimo
-        self._maximo = maximo
-        self._passo = passo
-        self._valor = max(minimo, min(maximo, valor_atual))
-
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setObjectName("SpinboxCapsula")
-        self.setFixedHeight(self._TAMANHO_BOTAO + 6)
-        self.setFixedWidth(self._largura_minima_necessaria(largura))
-        self.setStyleSheet(f"""
-            QWidget#SpinboxCapsula {{
-                background-color: {HIGHLIGHT_COLOR};
-                border: 1px solid {BORDA_SUTIL};
-                border-radius: {(self._TAMANHO_BOTAO + 6) // 2}px;
-            }}
-        """)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(3, 3, 3, 3)
-        layout.setSpacing(2)
-
-        self._botao_menos = self._criar_botao("−", self._decrementar)
-        self._campo_valor = _CampoValorSpinbox(str(self._valor))
-        self._campo_valor.setAlignment(Qt.AlignCenter)
-        self._campo_valor.setFrame(False)
-        self._campo_valor.setValidator(QIntValidator(self._minimo, self._maximo, self._campo_valor))
-        self._campo_valor.setStyleSheet(f"""
-            QLineEdit {{
-                color: {TEXT_COLOR}; font-family: Consolas; font-size: 12px;
-                border: none; background: transparent; padding: 0px;
-            }}
-        """)
-        self._campo_valor.editingFinished.connect(self._ao_editar_texto)
-        self._botao_mais = self._criar_botao("+", self._incrementar)
-
-        layout.addWidget(self._botao_menos)
-        layout.addWidget(self._campo_valor, stretch=1)
-        layout.addWidget(self._botao_mais)
-
-    def _largura_minima_necessaria(self, largura_pedida):
-        texto_maior = str(max(abs(self._minimo), abs(self._maximo)))
-        if self._minimo < 0:
-            texto_maior = "-" + texto_maior
-        largura_texto = QFontMetrics(QFont("Consolas", 12)).horizontalAdvance(texto_maior)
-        minima = self._TAMANHO_BOTAO * 2 + 6 + 4 + largura_texto + 14
-        return max(largura_pedida or 0, minima)
-
-    def _criar_botao(self, texto, ao_clicar):
-        botao = QPushButton(texto)
-        botao.setFixedSize(self._TAMANHO_BOTAO, self._TAMANHO_BOTAO)
-        botao.setCursor(Qt.PointingHandCursor)
-        botao.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent; color: {TEXT_DIM};
-                border: none; border-radius: {self._TAMANHO_BOTAO // 2}px;
-                font-size: 14px; font-weight: 600; padding: 0px;
-            }}
-            QPushButton:hover {{
-                background-color: {cor_com_alpha(GAIA_GOLD, 0.18)}; color: {GAIA_GOLD};
-            }}
-        """)
-        botao.clicked.connect(ao_clicar)
-        return botao
-
-    def _decrementar(self, checked=False):
-        self.setValue(self._valor - self._passo)
-
-    def _incrementar(self, checked=False):
-        self.setValue(self._valor + self._passo)
-
-    def _ao_editar_texto(self):
-        try:
-            novo_valor = int(self._campo_valor.text().strip())
-        except ValueError:
-            novo_valor = self._valor
-        self.setValue(novo_valor)
-
-    def value(self):
-        return self._valor
-
-    def setValue(self, novo_valor):
-        novo_valor = max(self._minimo, min(self._maximo, novo_valor))
-        mudou = novo_valor != self._valor
-        self._valor = novo_valor
-        self._campo_valor.setText(str(novo_valor))
-        if mudou:
-            self.valueChanged.emit(novo_valor)
-
-    def setRange(self, minimo, maximo):
-        self._minimo = minimo
-        self._maximo = maximo
-        self.setValue(self._valor)
-
-
-COR_BOLINHA_SWITCH_LIGADO = HIGHLIGHT_COLOR
-COR_BOLINHA_SWITCH_DESLIGADO = TEXT_COLOR
-
-
-class Switch(QCheckBox):
-    """Toggle animado (trilho + bolinha deslizando) no padrão da GAIA
-    (2026-08-16, pedido do usuário: "eu prefiro toggle do q checkbox" -
-    copiado de `ui/qt_widgets.py`, não importado, ver docstring do módulo) -
-    usado pra qualquer configuração liga/desliga (ex.: chacoalhada de
-    atenção), em vez de um `QCheckBox` nativo."""
-
-    def __init__(self, texto_on, texto_off, cor=GAIA_GOLD, marcado=False,
-                 cor_bolinha_ligado=COR_BOLINHA_SWITCH_LIGADO,
-                 cor_bolinha_desligado=COR_BOLINHA_SWITCH_DESLIGADO, parent=None):
-        super().__init__(parent)
-        self.texto_on = texto_on
-        self.texto_off = texto_off
-        self.cor = QColor(cor)
-        self.cor_bolinha_ligado = QColor(cor_bolinha_ligado)
-        self.cor_bolinha_desligado = QColor(cor_bolinha_desligado)
-        self._pos_bolinha = 1.0 if marcado else 0.0
-        self.setCursor(Qt.PointingHandCursor)
-        self.setChecked(marcado)
-        self.setText(texto_on if marcado else texto_off)
-        self.setFont(QFont(FONTE_BASE, 11))
-        self.stateChanged.connect(self._ao_mudar_estado)
-
-        self._anim = QPropertyAnimation(self, b"pos_bolinha")
-        self._anim.setDuration(160)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _obter_pos_bolinha(self):
-        return self._pos_bolinha
-
-    def _definir_pos_bolinha(self, valor):
-        self._pos_bolinha = valor
-        self.update()
-
-    pos_bolinha = Property(float, _obter_pos_bolinha, _definir_pos_bolinha)
-
-    def _ao_mudar_estado(self, estado):
-        marcado = bool(estado)
-        self.setText(self.texto_on if marcado else self.texto_off)
-        self._anim.stop()
-        self._anim.setStartValue(self._pos_bolinha)
-        self._anim.setEndValue(1.0 if marcado else 0.0)
-        self._anim.start()
-
-    def hitButton(self, pos):
-        return self.rect().contains(pos)
-
-    def sizeHint(self):
-        fm = self.fontMetrics()
-        largura_maior_texto = max(fm.horizontalAdvance(self.texto_on), fm.horizontalAdvance(self.texto_off))
-        return QSize(46 + 8 + largura_maior_texto, 26)
-
-    def paintEvent(self, evento):
-        pintor = QPainter(self)
-        pintor.setRenderHint(QPainter.Antialiasing)
-        largura_trilho, altura_trilho = 42, 21
-        y_trilho = (26 - altura_trilho) / 2
-        cor_trilho = self.cor if self.isChecked() else QColor(HIGHLIGHT_COLOR)
-        pintor.setBrush(cor_trilho)
-        pintor.setPen(Qt.NoPen)
-        pintor.drawRoundedRect(0, int(y_trilho), largura_trilho, altura_trilho, altura_trilho / 2, altura_trilho / 2)
-
-        raio_bolinha = altura_trilho / 2 - 2
-        x_bolinha = 2 + raio_bolinha + self._pos_bolinha * (largura_trilho - altura_trilho)
-        cor_bolinha = self.cor_bolinha_ligado if self.isChecked() else self.cor_bolinha_desligado
-        pintor.setBrush(cor_bolinha)
-        pintor.drawEllipse(QPoint(int(x_bolinha), int(y_trilho + altura_trilho / 2)), int(raio_bolinha), int(raio_bolinha))
-
-        x_texto = largura_trilho + 8
-        pintor.setPen(QColor(TEXT_COLOR))
-        pintor.setFont(self.font())
-        pintor.drawText(QRect(x_texto, 0, self.width() - x_texto, 26), Qt.AlignVCenter | Qt.AlignLeft, self.text())
-
-
-class _DialogoConfiguracoes(QDialog):
-    """Menu de configurações do Argus (2026-08-16, pedido do usuário depois
-    da reescrita do painel de detalhes - ver
-    argus_painel_detalhes_ticket.md) - reúne as opções que antes só davam pra
-    mudar editando `.env`/constante no código: limite de janelas destacadas
-    e chacoalhada de atenção (efeito opcional, "evitando uso frequente" -
-    ficava sem nenhum jeito de ligar sem mexer em código). Persistido via
-    `Persistencia.salvar_configuracoes` - aplica em tempo real, sem precisar
-    reiniciar o Argus (ver `ArgusWidget.abrir_configuracoes`).
-
-    🔥 Cards no padrão da GAIA (2026-08-16, pedido do usuário: "as
-    configuracoes tem varios botoes e campos fora do padrao... os botoes eu
-    quero eles no padrao da GAIA. A GAIA vai ser o padrao de todos os
-    projetos") - mesmo molde do modal `ModalArgus`
-    (assistant/ui/qt_modais/argus.py): `QFrame` com fundo `SURFACE_COLOR` +
-    cantos arredondados, título de seção, descrição discreta, e o controle
-    (`SpinboxCapsula`/`Switch`) - em vez de um `QFormLayout` cru com
-    `QSpinBox`/`QCheckBox` nativos."""
-
-    def __init__(self, limite_atual, chacoalhada_ativa, parent=None, perfil_n2=None):
-        super().__init__(parent)
-        self.setWindowTitle("Configurações do Argus")
-        self.setStyleSheet(f"background-color: {BG_COLOR};")
-        self.resize(380, 360)
-        self.limite_janelas_destacadas = limite_atual
-        self.chacoalhada_ativa = chacoalhada_ativa
-        self.perfil_n2 = perfil_n2
-
-        lay = QVBoxLayout(self)
-        if perfil_n2 is not None:
-            lay.addWidget(self._card_perfil(perfil_n2))
-        lay.addWidget(self._card_limite(limite_atual))
-        lay.addWidget(self._card_chacoalhada(chacoalhada_ativa))
-        lay.addStretch(1)
-
-        linha_botoes = QHBoxLayout()
-        linha_botoes.addStretch(1)
-        botao_cancelar = _botao_estilizado("Cancelar", cor=TEXT_DIM)
-        botao_cancelar.clicked.connect(self.reject)
-        linha_botoes.addWidget(botao_cancelar)
-        botao_salvar = _botao_estilizado("Salvar", preenchido=True)
-        botao_salvar.clicked.connect(self._confirmar)
-        linha_botoes.addWidget(botao_salvar)
-        lay.addLayout(linha_botoes)
-
-    def _card(self) -> tuple[QFrame, QVBoxLayout]:
-        frame = QFrame()
-        frame.setStyleSheet(f"background-color: {SURFACE_COLOR}; border-radius: 8px;")
-        lay_frame = QVBoxLayout(frame)
-        return frame, lay_frame
-
-    def _card_perfil(self, perfil_n2) -> QFrame:
-        """Perfil N1/N2 (2026-10-01, ver docs/ARQUITETURA.md "Perfil N1/N2") -
-        o Argus não sabe o que é Jira; só grava a escolha, quem interpreta é
-        o provider (`JiraProvider.perfil`)."""
-        frame, lay_frame = self._card()
-        lay_frame.addWidget(_titulo_secao("Perfil de atendimento"))
-        lay_frame.addWidget(_descricao(
-            "N1 acompanha os chamados do Service Desk atribuídos a você, por "
-            "status. N2 acompanha os tickets de desenvolvimento (Platz, "
-            "Bahn e SDP) atribuídos a você, com o SLA do chamado de origem."
-        ))
-        self._campo_perfil = Switch("N2 - Platz e Bahn", "N1 - Service Desk", marcado=perfil_n2)
-        lay_frame.addWidget(self._campo_perfil)
-        return frame
-
-    def _card_limite(self, limite_atual) -> QFrame:
-        frame, lay_frame = self._card()
-        lay_frame.addWidget(_titulo_secao("Limite de janelas destacadas"))
-        lay_frame.addWidget(_descricao(
-            "Quantas janelas de detalhes destacadas podem ficar abertas ao "
-            "mesmo tempo - ao atingir o limite, o Argus avisa antes de "
-            "deixar destacar outra."
-        ))
-        linha = QHBoxLayout()
-        self._campo_limite = SpinboxCapsula(1, 20, limite_atual, largura=90)
-        linha.addWidget(self._campo_limite)
-        linha.addStretch(1)
-        lay_frame.addLayout(linha)
-        return frame
-
-    def _card_chacoalhada(self, chacoalhada_ativa) -> QFrame:
-        frame, lay_frame = self._card()
-        lay_frame.addWidget(_titulo_secao("Chacoalhada de atenção"))
-        lay_frame.addWidget(_descricao(
-            "Quando você reabre um ticket já destacado, a janela sempre "
-            "recebe um pulso na borda/glow - a chacoalhada lateral é um "
-            "reforço visual extra, opcional."
-        ))
-        self._campo_chacoalhada = Switch("Ligada", "Desligada", marcado=chacoalhada_ativa)
-        lay_frame.addWidget(self._campo_chacoalhada)
-        return frame
-
-    def _confirmar(self):
-        self.limite_janelas_destacadas = self._campo_limite.value()
-        self.chacoalhada_ativa = self._campo_chacoalhada.isChecked()
-        if self.perfil_n2 is not None:
-            self.perfil_n2 = self._campo_perfil.isChecked()
-        self.accept()
-
-
-def salvar_configuracoes_do_dialogo(persistencia, dialogo) -> dict:
-    """Grava o que o usuário escolheu MESCLANDO com o que já estava salvo
-    (opção que o dialog não conhece nunca é apagada). Devolve o dict salvo."""
-    configuracoes = persistencia.obter_configuracoes()
-    configuracoes.update({
-        "limite_janelas_destacadas": dialogo.limite_janelas_destacadas,
-        "chacoalhada_ativa": dialogo.chacoalhada_ativa,
-    })
-    if dialogo.perfil_n2 is not None:
-        configuracoes["perfil"] = PERFIL_N2 if dialogo.perfil_n2 else PERFIL_N1
-    persistencia.salvar_configuracoes(configuracoes)
-    return configuracoes
-
-
-def abrir_configuracoes_argus(
-    persistencia, parent=None, com_perfil=True, limite_atual=None, chacoalhada_atual=None,
-) -> dict | None:
-    """Tela de Configurações NATIVA do Argus (2026-10-01, pedido do usuário:
-    "assim como o loki, o argus deveria ter sua propria tela de config. E a
-    gaia pega dele") - fonte única das opções do Argus, aberta pela bandeja
-    no uso standalone (via `ArgusWidget.abrir_configuracoes`) e pela GAIA
-    mesmo sem o widget aberto. Quem embute o Argus nunca duplica estes
-    campos; só acrescenta na própria UI o que é dele (ex.: voz na GAIA).
-
-    Devolve o dict salvo, ou None se o usuário cancelou."""
-    config = persistencia.obter_configuracoes()
-    dialogo = _DialogoConfiguracoes(
-        limite_atual if limite_atual is not None else config.get("limite_janelas_destacadas", LIMITE_JANELAS_DESTACADAS_PADRAO),
-        chacoalhada_atual if chacoalhada_atual is not None else config.get("chacoalhada_ativa", ATIVAR_CHACOALHADA_ATENCAO),
-        parent,
-        perfil_n2=(perfil_configurado(config) == PERFIL_N2) if com_perfil else None,
-    )
-    if dialogo.exec() != QDialog.Accepted:
-        return None
-    return salvar_configuracoes_do_dialogo(persistencia, dialogo)
+# Componentes e diálogos moram em módulos próprios desde 2026-11-12; os nomes
+# continuam importáveis daqui (a GAIA usa `abrir_configuracoes_argus`).
+from .componentes import (  # noqa: E402,F401
+    _TarefaSegundoPlano, executar_em_segundo_plano, _botao_estilizado, _titulo_secao, _descricao,
+    _CampoValorSpinbox, SpinboxCapsula, Switch,
+    COR_BOLINHA_SWITCH_LIGADO, COR_BOLINHA_SWITCH_DESLIGADO,
+)
+from .dialogos import (  # noqa: E402,F401
+    _DialogoComentario, _DialogoRascunho, _DialogoLogMudancas, _DialogoAvisoLimite,
+    _DialogoConfiguracoes, salvar_configuracoes_do_dialogo, abrir_configuracoes_argus,
+)
 
 
 class _AlcaArraste(QWidget):
@@ -1801,6 +1290,8 @@ class ArgusWidget(QWidget):
         # já tem uma busca em andamento.
         self._tarefa_atualizacao = None
         self._perfil_exibido = None
+        # Chaves com o "visto" ainda gravando (ver `_marcar_visto_em_segundo_plano`).
+        self._vistos_pendentes = set()
 
         # 🔥 Painel de detalhes anexado/destacado (2026-08-15, ver
         # argus_painel_detalhes_ticket.md) - `_painel_anexado` é a instância
@@ -1909,13 +1400,55 @@ class ArgusWidget(QWidget):
         self._tarefa_atualizacao.start()
 
     def _ao_atualizar_concluido(self, categorias):
+        # Ticket marcado como visto agora há pouco, com a gravação ainda em
+        # andamento: a busca pode ter lido o estado antigo.
+        for categoria in categorias:
+            for ticket in categoria.tickets:
+                if ticket.chave in self._vistos_pendentes:
+                    ticket.novo = False
         self._categorias = categorias
         self._reconstruir_barra()
         QTimer.singleShot(0, self._atualizar_painel_se_aberto)
         self._atualizar_paineis_de_detalhes_abertos()
+        horario = datetime.now().strftime("%H:%M")
+        falhas = getattr(self._provider, "falhas_ultima_busca", None) or []
+        if falhas:
+            detalhe = "\n".join(falhas[:MAX_FALHAS_NO_TOOLTIP])
+            if len(falhas) > MAX_FALHAS_NO_TOOLTIP:
+                detalhe += f"\n(+{len(falhas) - MAX_FALHAS_NO_TOOLTIP})"
+            self._alavanca.definir_estado(f"Atualizado às {horario}, com falhas:\n{detalhe}", True)
+        else:
+            self._alavanca.definir_estado(f"Atualizado às {horario}", False)
 
     def _ao_atualizar_falhou(self, mensagem):
         print(f"[Argus] Falha ao buscar dados do Jira (tentando de novo no próximo ciclo): {mensagem}")
+        horario = datetime.now().strftime("%H:%M")
+        self._alavanca.definir_estado(
+            f"Falha ao buscar no Jira às {horario}:\n{mensagem_falha_jira(mensagem)}\n"
+            "Tento de novo no próximo ciclo.", True,
+        )
+
+    def _marcar_visto_em_segundo_plano(self, chave, depois=None):
+        """🔥 Visto fora da thread da UI (2026-11-12): `marcar_visto` faz de 3
+        a 6 requisições (ticket, vinculado, MRs); rodando no clique, travava o
+        widget (e a GAIA, quando embutido) com o Jira lento, e uma falha de
+        rede subia sem tratamento. A tela já mostra como visto na hora; a
+        gravação vem depois (thread daemon, ver `executar_em_segundo_plano`)."""
+        self._vistos_pendentes.add(chave)
+
+        def _terminou(_resultado=None):
+            self._vistos_pendentes.discard(chave)
+            if depois is not None:
+                depois()
+
+        def _falhou(mensagem):
+            print(f"[Argus] Falha ao marcar {chave} como visto: {mensagem}")
+            self._alavanca.definir_estado(
+                f"Não consegui marcar {chave} como visto:\n{mensagem_falha_jira(mensagem)}", True,
+            )
+            _terminou()
+
+        executar_em_segundo_plano(lambda: self._provider.marcar_visto(chave), _terminou, _falhou)
 
     def _atualizar_paineis_de_detalhes_abertos(self):
         """Se prioridade/status/SLA/comentários mudarem num ticket que já
@@ -2282,9 +1815,9 @@ class ArgusWidget(QWidget):
         self._painel_anexado.mostrar(x, y, largura, int(altura), lado)
 
         if ticket.novo:
-            self._provider.marcar_visto(ticket.chave)
             ticket.novo = False
             self._reconstruir_barra()
+            self._marcar_visto_em_segundo_plano(ticket.chave)
 
         self._atualizar_painel_se_aberto()
 
@@ -2377,8 +1910,9 @@ class ArgusWidget(QWidget):
 
     def _abrir_ticket(self, ticket):
         webbrowser.open(ticket.url)
-        self._provider.marcar_visto(ticket.chave)
-        self.atualizar()
+        ticket.novo = False
+        self._reconstruir_barra()
+        self._marcar_visto_em_segundo_plano(ticket.chave, depois=self.atualizar)
 
     # --- janela (pintura/máscara/posição) -------------------------------------
 

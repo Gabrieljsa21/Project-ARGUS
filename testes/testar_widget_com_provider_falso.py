@@ -14,7 +14,6 @@ from PySide6.QtWidgets import QApplication
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from argus.core.tema import aplicar_estilo_global
 from argus.core.widget import ArgusWidget
 from argus.modelos import Categoria, Ticket
 from argus.persistencia import PersistenciaArquivo
