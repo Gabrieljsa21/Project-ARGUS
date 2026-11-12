@@ -93,7 +93,7 @@ def main():
     from PySide6.QtCore import QPoint as _QPoint
     alca_anexada = widget._painel_anexado.findChildren(_AlcaArraste)[0]
     pos_principal_antes = widget.pos()
-    pos_painel_antes = widget._painel_anexado.pos()
+    _pos_painel_antes = widget._painel_anexado.pos()
     alca_anexada.mousePressEvent(_EventoFalsoArraste(_QPoint(300, 300)))
     alca_anexada.mouseMoveEvent(_EventoFalsoArraste(_QPoint(350, 340)))
     alca_anexada.mouseReleaseEvent(_EventoFalsoArraste(_QPoint(350, 340)))

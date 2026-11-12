@@ -82,6 +82,9 @@ def main():
     # - a config salva deve prevalecer sobre o argumento do construtor.
     persistencia_2 = PersistenciaArquivo(caminho_config)
     widget_2 = ArgusWidget(ProviderFalso(), persistencia_2, limite_janelas_destacadas=5)
+    # Sem esperar, o processo podia terminar com a busca do widget_2 ainda
+    # rodando e abortar ("QThread: Destroyed while thread is still running").
+    widget_2._tarefa_atualizacao.wait()
     print("OK: limite persistido prevalece sobre o padrao do .env:", widget_2._limite_janelas_destacadas == 3)
     print("OK: chacoalhada persistida prevalece sobre o padrao:", widget_2._chacoalhada_ativa is True)
 

@@ -1,6 +1,6 @@
 [project]
 name = "argus"
-version = "0.9.1"
+version = "0.10.0"
 description = "Widget desktop de notificação de chamados do Jira - fica no topo, mostra novidade por status de atendimento."
 requires-python = ">=3.11"
 dependencies = [
@@ -8,6 +8,22 @@ dependencies = [
     "requests>=2.31",
     "python-dotenv>=1.0",
 ]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["testes"]
+pythonpath = ["."]
+python_files = ["testar_unidade_*.py", "testar_scripts.py", "testar_cor_titulo_sla.py", "testar_tooltip_pontuacao.py"]
+
+[tool.ruff]
+line-length = 130
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# Nomes indefinidos, imports sem uso e afins; estilo fica a critério de cada arquivo.
+select = ["F"]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -4,7 +4,7 @@ Widget desktop de notificação de chamados do Jira. Nasceu de uma ideia de noti
 
 Este documento consolida as decisões tomadas em uma sessão de design (2026-08-14), antes de qualquer linha de código escrita. Não substitui julgamento durante a implementação - decisões pequenas (intervalo exato de polling, cores, nomes de variável) ficam para a hora de codar.
 
-## Estado atual (2026-08-15)
+## Estado atual (2026-08-15, revisado em 2026-11-12)
 
 Todas as fases da seção "Fases sugeridas" (fim deste documento) foram
 implementadas, além de features que não estavam no design original. Onde
@@ -751,6 +751,65 @@ baixo). Motivo: a GAIA passou a comparar o mesmo estado do Jira contra DUAS
 persistências por ciclo (fala por voz + lembrete de não-visualizado) - sem
 essa separação, isso dobrava as requisições ao Jira por checagem.
 
+## Robustez e manutenção (2026-11-12)
+
+Leva de melhorias saída de uma análise do código inteiro, sem bug reportado
+antes. O que mudou e por quê:
+
+- **Visto em segundo plano.** `marcar_visto` faz de 3 a 6 requisições
+  (ticket, vinculado, MRs) e rodava no clique, na thread da UI: com o Jira
+  lento, o widget (e a GAIA, quando embutido) congelava, e uma falha de rede
+  subia sem tratamento. Agora o clique marca como visto na tela na hora e
+  `ArgusWidget._marcar_visto_em_segundo_plano` grava depois. Usa
+  `componentes.executar_em_segundo_plano` (thread daemon + sinal de volta pra
+  UI) em vez de `QThread`: uma `QThread` ainda rodando quando o processo
+  termina aborta o Python inteiro. Enquanto grava, a chave fica em
+  `_vistos_pendentes`, e uma busca que chegue nesse meio-tempo não volta a
+  marcar o ticket como novo.
+- **Comentário de terceiro.** A novidade por comentário comparava só o
+  ÚLTIMO comentário: o cliente comentava, você (ou o "Automation for Jira")
+  comentava em seguida, e o do cliente sumia. O estado agora guarda
+  `ultimo_comentario_terceiro_id` (e `origem_...` no N2), e a comparação usa
+  esse campo. "Visto" gravado antes dele cai na regra antiga, pra não reavisar
+  comentário já visto.
+- **Persistência atômica.** `PersistenciaArquivo` grava num `.tmp` e troca com
+  `os.replace` (até 5 tentativas no Windows, que recusa a troca se outro
+  processo estiver lendo), sob uma `RLock` no ler-alterar-gravar. Antes, um
+  leitor que pegasse o JSON pela metade recebia `{}` e a gravação seguinte
+  apagava todos os "vistos". Arquivo ilegível é renomeado para
+  `config.json.corrompido-<data>` em vez de sobrescrito.
+- **Poda.** Cada estado de ticket ganha `_salvo_em`; ao abrir, estados sem
+  gravação há mais de 180 dias (`DIAS_RETENCAO_ESTADO_TICKET`) e análises de
+  imagem sem estado correspondente saem. Um ticket ativo e parado esse tempo
+  todo só aparece como novo de novo.
+- **Falhas visíveis.** 401/403 sobem na hora de `buscar_dados_brutos` (não
+  adianta isolar por categoria nem tentar de novo); se todas as categorias
+  falham, o último erro sobe; falhas parciais ficam em
+  `JiraProvider.falhas_ultima_busca`. O widget mostra isso na alavanca (ponto
+  vermelho + tooltip com horário). Sem rede ao abrir, o provider nasce sem o
+  id da conta e busca na primeira atualização (`_garantir_account_id`);
+  credencial recusada continua impedindo a abertura.
+- **Rede.** Uma `requests.Session` por provider (conexão reaproveitada) e os
+  tickets de cada categoria em paralelo (`TICKETS_EM_PARALELO = 6`,
+  `_processar_ticket`), mantendo a ordem da JQL e o isolamento de falha por
+  ticket. A busca segue `nextPageToken` até o fim (antes cortava acima de 100).
+- **Urgência por palavra inteira.** `detectar_urgencia_no_texto` normaliza
+  acentos e usa borda de palavra: por substring, "comparado"/"separado"/
+  "disparado" contavam "parado" e ativavam o piso de 75 pontos.
+- **Máscara.** Senha/token só com separador (`senha: x`, `token=x`) ou
+  `Bearer <valor longo>`; antes "senha errada" perdia a palavra seguinte.
+  `obter_detalhes_completos` (botão "Analisar", que a GAIA manda pra um LLM)
+  e o trecho de comentário gravado no estado passam pela máscara.
+- **Log e abertura (standalone).** `app.py` repete stdout/stderr em
+  `~/.argus/argus.log` (vira `.log.1` acima de 1 MB) e mostra uma mensagem
+  quando falta variável no `.env` ou a credencial é recusada.
+- **Testes e CI.** `python -m pytest` coleta os testes de unidade
+  (`testar_unidade_*.py` e os dois em `unittest`) e roda cada teste antigo em
+  formato de script num subprocesso (`testar_scripts.py`, que falha com
+  código de saída diferente de 0 ou linha `FALHA`/`: False`). O GitHub Actions
+  (`.github/workflows/testes.yml`, Windows) roda `ruff check` (só regras `F`)
+  e o `pytest`.
+
 ## Modelo de interação da UI
 
 A interface usa **um widget só**, com todas as categorias, com uma barra de contadores por categoria embaixo da personagem (opcional, ver abaixo).
@@ -789,7 +848,10 @@ decorativo/opcional - o MVP funciona 100% só com a barra de contadores.
 ```
 argus/
 ├── core/                  # janela, estado (novidades/total/lista/detalhe), drag/transparência/
-│                          # click-through, animação opcional - não sabe o que é Jira
+│   │                      # click-through, animação opcional - não sabe o que é Jira
+│   ├── widget.py          # janela principal + painel de detalhes
+│   ├── componentes.py     # botão, switch, spinbox, tarefas em segundo plano (2026-11-12)
+│   └── dialogos.py        # comentário, rascunho, log, aviso de limite, Configurações (2026-11-12)
 ├── providers/
 │   └── jira_provider.py  # implementa NotificacaoProvider usando a JQL/issuelinks validados
 ├── persistencia.py        # interface abstrata p/ "visto" por ticket + posição da janela
