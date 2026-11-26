@@ -7,14 +7,18 @@ propósito (ver core/widget.py), então não existe nenhum "X" pra fechar. Sem
 isso, a única forma de encerrar seria o Gerenciador de Tarefas - mesmo padrão
 que a GAIA já usa (ícone na bandeja controla o processo em segundo plano).
 
-🔥 Log em arquivo e erros de abertura visíveis (2026-11-12) - iniciado pelo
-`.vbs` oculto (pythonw), todo `print` se perdia; e sem `.env` o Argus morria
-com `KeyError` sem mostrar janela nenhuma. Agora a saída vai também para
-`~/.argus/argus.log` e os problemas de configuração abrem uma mensagem."""
+🔥 Erros de abertura visíveis (2026-11-12) - sem `.env` o Argus morria com
+`KeyError` sem mostrar janela nenhuma; agora abre uma mensagem.
 
+🔥 Log no padrão do ecossistema (2026-11-26) - `registro.configurar("ARGUS")`
+grava em `%LOCALAPPDATA%/Ecossistema/ARGUS/Logs/AAAA-MM-DD.log` (30 dias),
+com `print`, stderr e exceções não tratadas indo junto (pythonw não tem
+console). Só aqui, no ponto de entrada: dentro da GAIA, os módulos do Argus
+usam `logging.getLogger(__name__)` e caem no log da própria GAIA."""
+
+import logging
 import os
 import sys
-from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
@@ -22,57 +26,37 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu
 
+from . import registro
 from .core.tema import aplicar_estilo_global
 from .core.widget import ArgusWidget, mensagem_falha_jira
 from .persistencia import PersistenciaArquivo
 from .providers.jira_provider import JiraProvider
 
 CAMINHO_ICONE = os.path.join(os.path.dirname(__file__), "assets", "icone_argus.ico")
-CAMINHO_LOG = os.path.join(os.path.expanduser("~"), ".argus", "argus.log")
-# Ao abrir, um log maior que isso vira `argus.log.1` (só um arquivo antigo).
-TAMANHO_MAXIMO_LOG_BYTES = 1_000_000
+# Log da 0.10.0 (antes do padrão do ecossistema); migrado na primeira abertura.
+CAMINHOS_LOG_ANTIGO = [os.path.join(os.path.expanduser("~"), ".argus", nome) for nome in ("argus.log", "argus.log.1")]
 VARIAVEIS_OBRIGATORIAS = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")
+PASTA_LOGS = registro.pasta_logs("ARGUS")
+
+log = logging.getLogger(__name__)
 
 
-class _SaidaComLog:
-    """Repete cada linha escrita no console (se houver um) no arquivo de log,
-    com data e hora no começo de cada linha."""
-
-    def __init__(self, original, arquivo):
-        self._original = original
-        self._arquivo = arquivo
-        self._inicio_de_linha = True
-
-    def write(self, texto):
-        if self._original is not None:
-            try:
-                self._original.write(texto)
-            except Exception:
-                pass
-        for pedaco in texto.splitlines(keepends=True):
-            if self._inicio_de_linha:
-                self._arquivo.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S "))
-            self._arquivo.write(pedaco)
-            self._inicio_de_linha = pedaco.endswith("\n")
-        self._arquivo.flush()
-        return len(texto)
-
-    def flush(self):
-        if self._original is not None:
-            try:
-                self._original.flush()
-            except Exception:
-                pass
-        self._arquivo.flush()
-
-
-def _configurar_log() -> None:
-    os.makedirs(os.path.dirname(CAMINHO_LOG), exist_ok=True)
-    if os.path.exists(CAMINHO_LOG) and os.path.getsize(CAMINHO_LOG) > TAMANHO_MAXIMO_LOG_BYTES:
-        os.replace(CAMINHO_LOG, CAMINHO_LOG + ".1")
-    arquivo = open(CAMINHO_LOG, "a", encoding="utf-8")
-    sys.stdout = _SaidaComLog(sys.stdout, arquivo)
-    sys.stderr = _SaidaComLog(sys.stderr, arquivo)
+def migrar_log_antigo(pasta_logs, caminhos_antigos=CAMINHOS_LOG_ANTIGO) -> list:
+    """Move o log da 0.10.0 (`~/.argus/argus.log` e `.log.1`) para a pasta
+    nova, como `antigo-argus.log`/`antigo-argus.log.1`. A pasta `~/.argus`
+    fica: ela guarda o `config.json` (estado e configurações). Devolve o que
+    foi movido."""
+    movidos = []
+    for caminho in caminhos_antigos:
+        if not os.path.exists(caminho):
+            continue
+        destino = os.path.join(pasta_logs, "antigo-" + os.path.basename(caminho))
+        try:
+            os.replace(caminho, destino)
+            movidos.append(destino)
+        except OSError as e:
+            log.warning("Não consegui mover o log antigo %s: %s", caminho, e)
+    return movidos
 
 
 def _icone_bandeja() -> QIcon:
@@ -81,13 +65,16 @@ def _icone_bandeja() -> QIcon:
 
 
 def _erro_de_abertura(texto: str) -> None:
-    print(f"[Argus] Não foi possível abrir: {texto}")
-    QMessageBox.critical(None, "Argus", f"{texto}\n\nDetalhes em {CAMINHO_LOG}")
+    log.error("Não foi possível abrir: %s", texto)
+    QMessageBox.critical(None, "Argus", f"{texto}\n\nLog em {PASTA_LOGS}")
     sys.exit(1)
 
 
 def main():
-    _configurar_log()
+    pasta_logs = registro.configurar("ARGUS")
+    for destino in migrar_log_antigo(str(pasta_logs)):
+        log.info("Log antigo movido para %s", destino)
+    log.info("Argus aberto")
     load_dotenv()
 
     app = QApplication(sys.argv)
@@ -123,7 +110,7 @@ def main():
     menu_bandeja = QMenu()
     menu_bandeja.addAction("Atualizar agora", widget.atualizar)
     menu_bandeja.addAction("Configurações...", widget.abrir_configuracoes)
-    menu_bandeja.addAction("Abrir log", lambda: os.startfile(CAMINHO_LOG))
+    menu_bandeja.addAction("Abrir logs", lambda: os.startfile(PASTA_LOGS))
     menu_bandeja.addSeparator()
     menu_bandeja.addAction("Fechar Argus", app.quit)
 

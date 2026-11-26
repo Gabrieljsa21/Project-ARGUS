@@ -29,6 +29,7 @@ resolve isso de forma confiável por nome. IDs abaixo confirmados direto contra
 `/rest/api/3/project/NSD/statuses` - só valem PRA ESTE projeto (NSD); mudariam
 se um dia o fluxo for replicado em outro projeto Jira."""
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -42,6 +43,8 @@ from ..persistencia import Persistencia
 from ..pontuacao import calcular_detalhamento_pontuacao, detectar_urgencia_no_texto
 from ..seguranca import mascarar
 from .base import NotificacaoProvider
+
+log = logging.getLogger(__name__)
 
 CATEGORIAS_STATUS = [
     ("em_revisao", "Em Revisão", 10101),
@@ -206,7 +209,7 @@ class JiraProvider(NotificacaoProvider):
         except requests.RequestException as e:
             if _eh_falha_fatal(e):
                 raise
-            print(f"[Argus] Jira inacessível ao abrir (tento de novo na primeira busca): {e}")
+            log.warning("Jira inacessível ao abrir (tento de novo na primeira busca): %s", e)
 
     def _garantir_account_id(self) -> None:
         if getattr(self, "_minha_account_id", None) is None:
@@ -814,7 +817,7 @@ class JiraProvider(NotificacaoProvider):
                         raise
                     ultimo_erro = e
                     falhas.append(f'Categoria "{nome_cat}": {e}')
-                    print(f'[Argus] Falha ao buscar tickets de "{nome_cat}" (tentando de novo no próximo ciclo): {e}')
+                    log.warning('Falha ao buscar tickets de "%s" (tento de novo no próximo ciclo): %s', nome_cat, e)
                     continue
                 # A exceção de um ticket só aparece ao ler o resultado dele,
                 # então cada um continua isolado; a ordem da JQL se mantém.
@@ -827,7 +830,7 @@ class JiraProvider(NotificacaoProvider):
                         if _eh_falha_fatal(e):
                             raise
                         falhas.append(f"{issue['key']}: {e}")
-                        print(f"[Argus] Falha ao processar o chamado {issue['key']} (ignorado neste ciclo): {e}")
+                        log.warning("Falha ao processar o chamado %s (ignorado neste ciclo): %s", issue["key"], e)
                 dados.append((chave_cat, nome_cat, tickets_brutos))
         if definicao and not dados and ultimo_erro is not None:
             raise ultimo_erro

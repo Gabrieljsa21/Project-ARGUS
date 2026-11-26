@@ -7,9 +7,12 @@ conhecem a interface `Persistencia`, nunca uma das duas implementações."""
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 import threading
 import time
+
+log = logging.getLogger(__name__)
 
 # Estado de ticket sem gravação há mais que isso é podado ao abrir (ticket
 # concluído há muito tempo). Se um dia ele voltar à fila, só aparece como novo.
@@ -103,7 +106,7 @@ class PersistenciaArquivo(Persistencia):
             destino = f"{self.caminho}.corrompido-{datetime.now():%Y%m%d-%H%M%S}"
             try:
                 os.replace(self.caminho, destino)
-                print(f"[Argus] Estado ilegível guardado em {destino}; começando do zero.")
+                log.warning("Estado ilegível guardado em %s; começando do zero.", destino)
             except OSError:
                 pass
             return {}

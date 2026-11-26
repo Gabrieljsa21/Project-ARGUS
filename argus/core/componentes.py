@@ -3,8 +3,8 @@ em segundo plano, botão, título/descrição de seção, spinbox em cápsula e
 switch. Saíram de `widget.py` (2026-11-12) pra ele ficar só com a janela
 principal e o painel de detalhes."""
 
+import logging
 import threading
-import traceback
 
 from PySide6.QtCore import (
     QObject, Qt, QTimer, QThread, Signal, QPoint, QRect, QSize, QPropertyAnimation, QEasingCurve, Property,
@@ -21,6 +21,7 @@ from .tema import (
     GAIA_GOLD, GAIA_GOLD_HOVER, TEXT_COLOR, TEXT_DIM, FONTE_BASE, cor_com_alpha,
 )
 
+log = logging.getLogger(__name__)
 
 # Compartilhadas com widget.py e dialogos.py.
 TAMANHO_FONTE_DETALHE = 11
@@ -36,7 +37,7 @@ class _TarefaSegundoPlano(QThread):
     LLM (gerar o rascunho de análise). `concluido`/`erro` disparam de volta na
     thread da UI (padrão normal de sinal do Qt entre threads).
 
-    O traceback completo vai pro log (2026-11-12) - antes só a mensagem curta
+    O traceback completo vai pro log (2026-11-12, `log.exception`) - antes só a mensagem curta
     chegava em `erro`, e um bug de verdade ficava indistinguível de rede."""
     concluido = Signal(object)
     erro = Signal(str)
@@ -49,7 +50,7 @@ class _TarefaSegundoPlano(QThread):
         try:
             resultado = self._func()
         except Exception as e:
-            print(f"[Argus] Erro em segundo plano:\n{traceback.format_exc()}")
+            log.exception("Erro em segundo plano")
             self.erro.emit(str(e))
         else:
             self.concluido.emit(resultado)
@@ -87,7 +88,7 @@ def executar_em_segundo_plano(func, ao_concluir=None, ao_falhar=None) -> None:
         try:
             resultado = func()
         except Exception as e:
-            print(f"[Argus] Erro em segundo plano:\n{traceback.format_exc()}")
+            log.exception("Erro em segundo plano")
             ponte.erro.emit(str(e))
         else:
             ponte.concluido.emit(resultado)

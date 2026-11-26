@@ -800,15 +800,39 @@ antes. O que mudou e por quê:
   `Bearer <valor longo>`; antes "senha errada" perdia a palavra seguinte.
   `obter_detalhes_completos` (botão "Analisar", que a GAIA manda pra um LLM)
   e o trecho de comentário gravado no estado passam pela máscara.
-- **Log e abertura (standalone).** `app.py` repete stdout/stderr em
-  `~/.argus/argus.log` (vira `.log.1` acima de 1 MB) e mostra uma mensagem
-  quando falta variável no `.env` ou a credencial é recusada.
+- **Log e abertura (standalone).** `app.py` mostra uma mensagem quando falta
+  variável no `.env` ou a credencial é recusada. O log desta versão
+  (`~/.argus/argus.log`) foi substituído na 0.11.0, ver "Log no padrão do
+  ecossistema" abaixo.
 - **Testes e CI.** `python -m pytest` coleta os testes de unidade
   (`testar_unidade_*.py` e os dois em `unittest`) e roda cada teste antigo em
   formato de script num subprocesso (`testar_scripts.py`, que falha com
   código de saída diferente de 0 ou linha `FALHA`/`: False`). O GitHub Actions
   (`.github/workflows/testes.yml`, Windows) roda `ruff check` (só regras `F`)
   e o `pytest`.
+
+## Log no padrão do ecossistema (2026-11-26)
+
+O ecossistema passou a ter um padrão único de log (pasta fora do repositório,
+um arquivo por dia, 30 dias, formato `AAAA-MM-DD hh:mm:ss,mmm NÍVEL módulo:
+mensagem`). O Argus era o único que ainda gravava em `~\.argus`.
+
+- `argus/registro.py` é cópia, sem alteração, do `clio/registro.py` da CLIO
+  (o padrão manda copiar o arquivo em vez de criar um pacote compartilhado,
+  pra não acoplar os repositórios).
+- Só `app.py` (Argus sozinho) chama `registro.configurar("ARGUS")`: log em
+  `%LOCALAPPDATA%\Ecossistema\ARGUS\Logs\AAAA-MM-DD.log`, com `print`,
+  stderr e exceções não tratadas (inclusive de thread) indo junto, já que o
+  `.vbs` sobe com pythonw, sem console. Dentro da GAIA ninguém chama
+  `configurar`: os módulos usam `logging.getLogger(__name__)` e as linhas
+  caem no log da própria GAIA, sem mexer na configuração dela.
+- Os `print("[Argus] ...")` viraram `log.warning`/`log.error`, e as tarefas
+  em segundo plano registram o traceback com `log.exception`.
+- Na primeira abertura, `migrar_log_antigo` move `~/.argus/argus.log` (e
+  `.log.1`) para a pasta nova como `antigo-argus.log`. A pasta `~/.argus`
+  fica, porque guarda o `config.json`. A limpeza de 30 dias só apaga
+  arquivos `AAAA-MM-DD.log`, então o log migrado fica até alguém apagar.
+- A bandeja troca "Abrir log" por "Abrir logs", que abre a pasta.
 
 ## Modelo de interação da UI
 
