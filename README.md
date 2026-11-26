@@ -55,7 +55,7 @@ Use `iniciar_argus_oculto.vbs` para abrir sem deixar um terminal visível. `cria
 
 - **Ponto vermelho no ícone:** a última busca no Jira falhou. Passe o mouse no ícone para ver o motivo e o horário; o Argus tenta de novo sozinho no próximo ciclo.
 - **"Credencial do Jira recusada (401)":** o token expirou ou o e-mail não confere. Gere um token novo e atualize o `.env`.
-- **Log:** a saída do Argus fica em `~/.argus/argus.log` (menu da bandeja, "Abrir log").
+- **Log:** um arquivo por dia em `%LOCALAPPDATA%\Ecossistema\ARGUS\Logs` (menu da bandeja, "Abrir logs"), guardado por 30 dias. Rodando pela GAIA, as mensagens do Argus vão para o log da GAIA.
 
 ## Testes
 

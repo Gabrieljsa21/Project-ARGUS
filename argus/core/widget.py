@@ -28,6 +28,7 @@ nunca tem mais de UMA instância aberta (anexada OU destacada, nunca as
 duas). Botões/campos seguem o padrão visual da GAIA (`_BotaoIcone`, `Switch`,
 `SpinboxCapsula`, ver `_DialogoConfiguracoes`)."""
 
+import logging
 import os
 import webbrowser
 from datetime import datetime
@@ -51,6 +52,8 @@ from .tema import (
 from ..modelos import texto_pontuacao
 from .win32_dwm import aplicar_cantos_redondos, aplicar_mica, aplicar_acrylic, remover_cor_borda
 from .componentes import TAMANHO_FONTE_DETALHE, LIMITE_JANELAS_DESTACADAS_PADRAO, ATIVAR_CHACOALHADA_ATENCAO
+
+log = logging.getLogger(__name__)
 
 LIMIAR_ARRASTAR_PIXELS = 6
 # Ponto de aviso na alavanca quando a última busca no Jira falhou (inteira ou
@@ -1421,7 +1424,7 @@ class ArgusWidget(QWidget):
             self._alavanca.definir_estado(f"Atualizado às {horario}", False)
 
     def _ao_atualizar_falhou(self, mensagem):
-        print(f"[Argus] Falha ao buscar dados do Jira (tentando de novo no próximo ciclo): {mensagem}")
+        log.warning("Falha ao buscar dados do Jira (tento de novo no próximo ciclo): %s", mensagem)
         horario = datetime.now().strftime("%H:%M")
         self._alavanca.definir_estado(
             f"Falha ao buscar no Jira às {horario}:\n{mensagem_falha_jira(mensagem)}\n"
@@ -1442,7 +1445,7 @@ class ArgusWidget(QWidget):
                 depois()
 
         def _falhou(mensagem):
-            print(f"[Argus] Falha ao marcar {chave} como visto: {mensagem}")
+            log.warning("Falha ao marcar %s como visto: %s", chave, mensagem)
             self._alavanca.definir_estado(
                 f"Não consegui marcar {chave} como visto:\n{mensagem_falha_jira(mensagem)}", True,
             )

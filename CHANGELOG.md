@@ -10,6 +10,11 @@ Versionamento: [Semantic Versioning](docs/VERSIONAMENTO_CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-26
+
+### Alterado
+- **Log no padrão do ecossistema** - o Argus sozinho grava um arquivo por dia em `%LOCALAPPDATA%\Ecossistema\ARGUS\Logs` (30 dias guardados), com data, nível e módulo em cada linha e o traceback completo dos erros. O log antigo (`~/.argus/argus.log`) é movido para lá na primeira abertura, e "Abrir log" na bandeja virou "Abrir logs" (abre a pasta). Rodando pela GAIA, as mensagens do Argus entram no log da GAIA. Ver `docs/ARQUITETURA.md`, seção "Log no padrão do ecossistema".
+
 ## [0.10.0] - 2026-11-12
 
 ### Adicionado
